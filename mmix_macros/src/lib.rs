@@ -66,31 +66,22 @@ pub fn define_special_registers(tokens: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(tokens as SpecialRegistersInput);
     let SpecialRegistersInput { vis, name, regs } = input;
     let reg_defs: Vec<RegisterDef> = regs.into_iter().collect();
+
     let reg_idents: Vec<&Ident> = reg_defs.iter().map(|r| &r.name).collect();
     let variants: Vec<Ident> = reg_idents.iter().map(|id| to_variant_name(id)).collect();
     let encodings: Vec<&LitInt> = reg_defs.iter().map(|r| &r.encoding).collect();
-    let docs: Vec<Option<&LitStr>> = reg_defs.iter().map(|r| r.doc.as_ref()).collect();
-    let count = variants.len();
     let reg_names: Vec<String> = reg_idents.iter().map(|id| id.to_string()).collect();
+    let count = reg_defs.len();
 
-    let mut enum_name = name.to_string();
-    if enum_name.ends_with('s') {
-        enum_name.pop();
-    }
-    if enum_name.is_empty() {
-        enum_name = "SpecialRegister".into();
-    }
+    let variant_docs: Vec<_> = reg_defs.iter().map(|r| {
+        r.doc.as_ref().map(|doc| quote! { #[doc = #doc] })
+    }).collect();
+
+    let enum_name = name.to_string().strip_suffix('s')
+        .filter(|s| !s.is_empty())
+        .map_or("SpecialRegister".to_owned(), str::to_owned);
 
     let enum_ident = Ident::new(&enum_name, name.span());
-    let count_ident = format_ident!("{}_COUNT", enum_name.to_uppercase());
-
-    let variant_docs = docs.iter().map(|doc_opt| {
-        if let Some(doc) = doc_opt {
-            quote! { #[doc = #doc] }
-        } else {
-            quote! {}
-        }
-    });
 
     let expanded = quote! {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -166,8 +157,6 @@ pub fn define_special_registers(tokens: TokenStream) -> TokenStream {
                 dbg.finish()
             }
         }
-
-        pub const #count_ident: usize = #count;
     };
 
     expanded.into()
