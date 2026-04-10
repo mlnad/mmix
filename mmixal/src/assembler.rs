@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use mmix::op;
+use mmix_core::op;
 use crate::{AssembleResult, AssembleError};
 
 /// Map mnemonic -> (base opcode, OperandKind)

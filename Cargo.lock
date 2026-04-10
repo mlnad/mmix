@@ -347,7 +347,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mmix"
+name = "mmix_core"
 version = "0.1.0"
 dependencies = [
  "mmix_macros",
@@ -366,7 +366,7 @@ dependencies = [
 name = "mmixal"
 version = "0.1.0"
 dependencies = [
- "mmix",
+ "mmix_core",
 ]
 
 [[package]]
@@ -375,7 +375,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "crossterm",
- "mmix",
+ "mmix_core",
  "mmixal",
  "ratatui",
 ]

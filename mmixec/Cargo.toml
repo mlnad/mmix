@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mmix = { path = ".." }
+mmix_core = { path = "../mmix_core" }
 mmixal = { path = "../mmixal" }
 ratatui = "0.29"
 crossterm = "0.28"

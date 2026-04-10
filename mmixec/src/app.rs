@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use mmix::{Machine, SpecialRegister};
+use mmix_core::{Machine, SpecialRegister};
 use mmixal::DebugInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -135,7 +135,13 @@ mod tests {
 
     fn make_app(src: &str) -> App {
         let asm_result = mmixal::assemble(src).unwrap();
-        App::new(src, asm_result)
+        let debug_info = DebugInfo {
+            line_to_offset: asm_result.line_to_offset.clone(),
+            offset_to_line: asm_result.offset_to_line.clone(),
+            source_file: String::new(),
+            source_lines: src.lines().map(|s| s.to_string()).collect(),
+        };
+        App::from_binary(asm_result.entry_addr, &asm_result.bytes, debug_info)
     }
 
     #[test]
