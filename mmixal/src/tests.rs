@@ -226,21 +226,39 @@ fn assemble_hex_with_0x() {
 fn assemble_get_special_reg() {
     let r = assemble("        GET $1,rA").unwrap();
     let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
-    assert_eq!(word, ((op::GET as u32) << 24) | (1 << 16) | 0);
+    assert_eq!(word, ((op::GET as u32) << 24) | (1 << 16) | 21);
 }
 
 #[test]
 fn assemble_put_special_reg() {
     let r = assemble("        PUT rA,$5").unwrap();
     let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
-    assert_eq!(word, ((op::PUT as u32) << 24) | (0 << 16) | 5);
+    assert_eq!(word, ((op::PUT as u32) << 24) | (21 << 16) | 5);
 }
 
 #[test]
 fn assemble_put_immediate() {
     let r = assemble("        PUT rA,42").unwrap();
     let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
-    assert_eq!(word, ((op::PUTI as u32) << 24) | (0 << 16) | 42);
+    assert_eq!(word, ((op::PUTI as u32) << 24) | (21 << 16) | 42);
+}
+
+// ─── @ symbol (current address) ───
+
+#[test]
+fn assemble_branch_to_self() {
+    // BZ $0,@ should branch to itself (offset 0)
+    let r = assemble("        BZ $0,@").unwrap();
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::BZ as u32) << 24) | (0 << 16) | 0);
+}
+
+#[test]
+fn assemble_jmp_to_self() {
+    // JMP @ should jump to itself (offset 0)
+    let r = assemble("        JMP @").unwrap();
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::JMP as u32) << 24) | 0);
 }
 
 // ─── Line-to-offset mappings ───

@@ -3,39 +3,38 @@ use mmix_macros::define_special_registers;
 
 define_special_registers! {
     pub struct SpecialRegisters {
-        ra = 0 : "Arithmetic status register",
-        rb = 1 : "Bootstrap register (trap)",
-        rc = 2 : "Continuation register",
-        rd = 3 : "Dividend register",
-        re = 4 : "Epsilon register",
-        rf = 5 : "Failure location register",
-        rg = 6 : "Global threshold register",
-        rh = 7 : "Himult register",
-        ri = 8 : "Interval counter",
-        rj = 9 : "Return-jump register",
-        rk = 10 : "Interrupt mask register",
-        rl = 11 : "Local threshold register",
-        rm = 12 : "Multiplex mask register",
-        rn = 13 : "Serial number",
-        ro = 14 : "Register stack offset",
-        rp = 15 : "Prediction register",
-        rq = 16 : "Interrupt request register",
-        rr = 17 : "Remainder register",
-        rs = 18 : "Register stack pointer",
-        rt = 19 : "Trap address register",
-        ru = 20 : "Usage counter",
-        rv = 21 : "Virtual translation register",
-        rw = 22 : "Where-interrupted register (trip)",
-        rx = 23 : "Execution register (trip)",
-        ry = 24 : "Y operand (trip)",
-        rz = 25 : "Z operand (trip)",
-        rbb = 26 : "Bootstrap register (trap)",
-        rtt = 27 : "Dynamic trap address register",
-        rww = 28 : "Where-interrupted register (dynamic trap)",
-        rxx = 29 : "Execution register (dynamic trap)",
-        ryy = 30 : "Y operand (dynamic trap)",
-        rzz = 31 : "Z operand (dynamic trap)",
-        rpc = 32 : "Program counter (internal)"
+        ra = 21 : "arithmetic status register",
+        rb = 0 : "bootstrap register (trip)",
+        rc = 8 : "cycle counter",
+        rd = 1 : "dividend register",
+        re = 2 : "epsilon register",
+        rf = 22 : "failure location register",
+        rg = 19 : "global threshold register",
+        rh = 3 : "himult register",
+        ri = 12 : "interval counter",
+        rj = 4 : "return-jump register",
+        rk = 15 : "interrupt mask register",
+        rl = 20 : "local threshold register",
+        rm = 5 : "multiplex mask register",
+        rn = 9 : "serial number",
+        ro = 10 : "register stack offset",
+        rp = 23 : "prediction register",
+        rq = 16 : "interrupt request register",
+        rr = 6 : "remainder register",
+        rs = 11 : "register stack pointer",
+        rt = 13 : "trap address register",
+        ru = 17 : "usage counter",
+        rv = 18 : "virtual translation register",
+        rw = 24 : "where-interrupted register (trip)",
+        rx = 25 : "execution register (trip)",
+        ry = 26 : "Y operand (trip)",
+        rz = 27 : "Z operand (trip)",
+        rbb = 7 : "bootstrap register (trap)",
+        rtt = 14 : "dynamic trap address register",
+        rww = 28 : "where-interrupted register (dynamic trap)",
+        rxx = 29 : "execution register (trap)",
+        ryy = 30 : "Y operand (trap)",
+        rzz = 31 : "Z operand (trap)",
     }
 }
 
@@ -113,13 +112,12 @@ mod tests {
     fn special_reg_name() {
         assert_eq!(SpecialRegister::Ra.name(), "ra");
         assert_eq!(SpecialRegister::Rzz.name(), "rzz");
-        assert_eq!(SpecialRegister::Rpc.name(), "rpc");
     }
 
     #[test]
     fn special_reg_count() {
         assert_eq!(SpecialRegister::COUNT, SpecialRegister::ALL.len());
-        assert_eq!(SpecialRegister::COUNT, 33); // 26 + 6 doubled + rpc
+        assert_eq!(SpecialRegister::COUNT, 32);
     }
 
     #[test]

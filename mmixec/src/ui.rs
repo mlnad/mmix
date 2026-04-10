@@ -108,14 +108,20 @@ fn draw_code_panel(f: &mut Frame, app: &App, area: Rect) {
 fn draw_register_panel(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    // Special registers (only non-zero ones except rpc which always shows)
+    // Special registers (only non-zero ones, plus PC shown separately)
     lines.push(Line::from(Span::styled(
         "── Special ──",
         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
     )));
 
+    // Always show PC
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<4}", "@"), Style::default().fg(Color::Green)),
+        Span::styled(format!(" = {:#018x}", app.machine.pc), Style::default().fg(Color::White)),
+    ]));
+
     for (name, val) in app.all_special_regs() {
-        if val != 0 || name == "rpc" {
+        if val != 0 {
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<4}", name), Style::default().fg(Color::Green)),
                 Span::styled(format!(" = {:#018x}", val), Style::default().fg(Color::White)),

@@ -12,7 +12,7 @@ impl Machine {
             return Err("Machine halted".into());
         }
 
-        let pc = self.special.get(SpecialRegister::Rpc);
+        let pc = self.pc;
         let word = self.memory.read_u32(pc);
         let inst = RawInst::decode(word);
         let mut next_pc = pc.wrapping_add(4);
@@ -321,7 +321,7 @@ impl Machine {
             }
         }
 
-        self.special.set(SpecialRegister::Rpc, next_pc);
+        self.pc = next_pc;
         Ok(())
     }
 
@@ -378,7 +378,7 @@ impl Machine {
 
     /// Set the program entry point (PC)
     pub fn set_entry(&mut self, addr: u64) {
-        self.special.set(SpecialRegister::Rpc, addr);
+        self.pc = addr;
     }
 
     pub fn run(&mut self) -> Result<(), String> {
@@ -1123,7 +1123,7 @@ mod tests {
     #[test]
     fn pc_advances_by_4() {
         let m = exec_one(op::SETL, 0, 0, 0);
-        assert_eq!(m.special.get(SpecialRegister::Rpc), 4);
+        assert_eq!(m.pc, 4);
     }
 
     // ==== Unimplemented opcode ====

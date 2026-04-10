@@ -8,6 +8,7 @@ pub struct Machine {
     pub special: SpecialRegisters,
     pub general: GeneralRegisters,
     pub memory: Memory,
+    pub pc: u64,
     pub halted: bool,
     pub output_buffer: Vec<u8>,
 }
@@ -18,6 +19,7 @@ impl Machine {
             special: SpecialRegisters::new(),
             general: GeneralRegisters::new(),
             memory: Memory::new(),
+            pc: 0,
             halted: false,
             output_buffer: Vec::new(),
         }
@@ -27,6 +29,7 @@ impl Machine {
         self.special = SpecialRegisters::new();
         self.general = GeneralRegisters::new();
         self.memory = Memory::new();
+        self.pc = 0;
         self.halted = false;
         self.output_buffer.clear();
     }

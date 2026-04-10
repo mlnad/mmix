@@ -71,7 +71,7 @@ impl App {
                     self.running = false;
                     self.status_msg = "Program halted".into();
                 } else {
-                    let pc = self.machine.special.get(SpecialRegister::Rpc);
+                    let pc = self.machine.pc;
                     if let Some(line) = self.addr_to_line.get(&pc) {
                         self.status_msg = format!("PC={:#x} line {}", pc, line + 1);
                     } else {
@@ -90,7 +90,7 @@ impl App {
     }
 
     pub fn current_line(&self) -> Option<usize> {
-        let pc = self.machine.special.get(SpecialRegister::Rpc);
+        let pc = self.machine.pc;
         self.addr_to_line.get(&pc).copied()
     }
 
@@ -274,7 +274,7 @@ String  BYTE    \"Hi\",0";
 
     impl App {
         fn entry_addr(&self) -> u64 {
-            self.machine.special.get(SpecialRegister::Rpc) - if self.halted { 4 } else { 0 }
+            self.machine.pc - if self.halted { 4 } else { 0 }
             // just checks initial state is 0
         }
     }

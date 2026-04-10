@@ -150,6 +150,23 @@ pub fn define_special_registers(tokens: TokenStream) -> TokenStream {
             }
         }
 
+        impl core::ops::Index<#enum_ident> for #name {
+            type Output = u64;
+            fn index(&self, reg: #enum_ident) -> &u64 {
+                match reg {
+                    #( #enum_ident::#variants => &self.#reg_idents ),*
+                }
+            }
+        }
+
+        impl core::ops::IndexMut<#enum_ident> for #name {
+            fn index_mut(&mut self, reg: #enum_ident) -> &mut u64 {
+                match reg {
+                    #( #enum_ident::#variants => &mut self.#reg_idents ),*
+                }
+            }
+        }
+
         impl core::fmt::Debug for #name {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 let mut dbg = f.debug_struct(stringify!(#name));

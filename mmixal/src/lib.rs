@@ -140,12 +140,12 @@ fn parse_reg_or_imm(s: &str) -> Result<(u8, bool), String> {
 fn parse_special_reg(s: &str) -> Result<u8, String> {
     let s = s.trim().to_lowercase();
     let mapping = [
-        ("ra", 0), ("rb", 1), ("rc", 2), ("rd", 3), ("re", 4),
-        ("rf", 5), ("rg", 6), ("rh", 7), ("ri", 8), ("rj", 9),
-        ("rk", 10), ("rl", 11), ("rm", 12), ("rn", 13), ("ro", 14),
-        ("rp", 15), ("rq", 16), ("rr", 17), ("rs", 18), ("rt", 19),
-        ("ru", 20), ("rv", 21), ("rw", 22), ("rx", 23), ("ry", 24),
-        ("rz", 25), ("rbb", 26), ("rtt", 27), ("rww", 28),
+        ("ra", 21), ("rb", 0), ("rc", 8), ("rd", 1), ("re", 2),
+        ("rf", 22), ("rg", 19), ("rh", 3), ("ri", 12), ("rj", 4),
+        ("rk", 15), ("rl", 20), ("rm", 5), ("rn", 9), ("ro", 10),
+        ("rp", 23), ("rq", 16), ("rr", 6), ("rs", 11), ("rt", 13),
+        ("ru", 17), ("rv", 18), ("rw", 24), ("rx", 25), ("ry", 26),
+        ("rz", 27), ("rbb", 7), ("rtt", 14), ("rww", 28),
         ("rxx", 29), ("ryy", 30), ("rzz", 31),
     ];
     for &(name, enc) in &mapping {
@@ -421,8 +421,11 @@ fn parse_string_literal(s: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests;
 
-fn resolve_label_or_number(s: &str, labels: &HashMap<String, u64>) -> Result<u64, String> {
+fn resolve_label_or_number(s: &str, labels: &HashMap<String, u64>, cur_offset: u64) -> Result<u64, String> {
     let s = s.trim();
+    if s == "@" {
+        return Ok(cur_offset);
+    }
     if s.starts_with('$') || s.starts_with('#') || s.starts_with("0x") || s.starts_with("0X")
         || s.starts_with('-') || s.chars().next().is_some_and(|c| c.is_ascii_digit())
     {
@@ -476,7 +479,7 @@ fn encode_instruction(
                 return Err(err(format!("expected 2 operands, got {}", args.len())));
             }
             let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let target = resolve_label_or_number(args[1], labels).map_err(|e| err(e))?;
+            let target = resolve_label_or_number(args[1], labels, cur_offset).map_err(|e| err(e))?;
             let diff = target as i64 - cur_offset as i64;
             if diff < 0 {
                 // Backward branch
@@ -492,7 +495,7 @@ fn encode_instruction(
             if args.len() != 1 {
                 return Err(err(format!("expected 1 operand, got {}", args.len())));
             }
-            let target = resolve_label_or_number(args[0], labels).map_err(|e| err(e))?;
+            let target = resolve_label_or_number(args[0], labels, cur_offset).map_err(|e| err(e))?;
             let diff = target as i64 - cur_offset as i64;
             if diff < 0 {
                 let offset = ((-diff) / 4) as u64;
