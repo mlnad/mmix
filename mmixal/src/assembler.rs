@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use mmix_core::op;
+use mmix_core::{op, NAME_TABLE, SpecialRegister};
 use crate::{AssembleResult, AssembleError};
 
 /// Map mnemonic -> (base opcode, OperandKind)
@@ -28,48 +28,46 @@ fn build_opcode_table() -> HashMap<&'static str, (u8, OperandKind)> {
     let mut m = HashMap::new();
 
     // Arithmetic
-    for &(name, base) in &[
-        ("ADD", op::ADD), ("SUB", op::SUB), ("MUL", op::MUL), ("DIV", op::DIV),
-        ("CMP", op::CMP),
-        ("SL", op::SL), ("SR", op::SR), ("SRU", op::SRU),
-        ("AND", op::AND), ("OR", op::OR), ("XOR", op::XOR),
-        ("CSZ", op::CSZ), ("CSNZ", op::CSNZ),
+    for &base in &[
+        op::ADD, op::SUB, op::MUL, op::DIV, op::CMP,
+        op::SL, op::SR, op::SRU,
+        op::AND, op::OR, op::XOR,
+        op::CSZ, op::CSNZ,
     ] {
-        m.insert(name, (base, ThreeReg));
+        m.insert(NAME_TABLE[base as usize], (base, ThreeReg));
     }
 
-    m.insert("NEG", (op::NEG, NegStyle));
+    m.insert(NAME_TABLE[op::NEG as usize], (op::NEG, NegStyle));
 
     // Memory
-    for &(name, base) in &[
-        ("LDB", op::LDB), ("LDBU", op::LDBU), ("LDW", op::LDW),
-        ("LDT", op::LDT), ("LDO", op::LDO),
-        ("STB", op::STB), ("STW", op::STW), ("STT", op::STT), ("STO", op::STO),
-        ("GO", op::GO),
+    for &base in &[
+        op::LDB, op::LDBU, op::LDW, op::LDT, op::LDO,
+        op::STB, op::STW, op::STT, op::STO,
+        op::GO,
     ] {
-        m.insert(name, (base, ThreeReg));
+        m.insert(NAME_TABLE[base as usize], (base, ThreeReg));
     }
 
     // Constant loads / ORx
-    for &(name, base) in &[
-        ("SETH", op::SETH), ("SETMH", op::SETMH), ("SETML", op::SETML), ("SETL", op::SETL),
-        ("ORH", op::ORH), ("ORMH", op::ORMH), ("ORML", op::ORML), ("ORL", op::ORL),
+    for &base in &[
+        op::SETH, op::SETMH, op::SETML, op::SETL,
+        op::ORH, op::ORMH, op::ORML, op::ORL,
     ] {
-        m.insert(name, (base, RegImm16));
+        m.insert(NAME_TABLE[base as usize], (base, RegImm16));
     }
 
     // Branches
-    for &(name, base) in &[
-        ("BZ", op::BZ), ("BNZ", op::BNZ), ("BP", op::BP), ("BN", op::BN), ("BNN", op::BNN),
-        ("GETA", op::GETA),
+    for &base in &[
+        op::BZ, op::BNZ, op::BP, op::BN, op::BNN,
+        op::GETA,
     ] {
-        m.insert(name, (base, Branch));
+        m.insert(NAME_TABLE[base as usize], (base, Branch));
     }
 
-    m.insert("JMP", (op::JMP, Jump));
-    m.insert("TRAP", (op::TRAP, Trap));
-    m.insert("GET", (op::GET, Get));
-    m.insert("PUT", (op::PUT, Put));
+    m.insert(NAME_TABLE[op::JMP as usize], (op::JMP, Jump));
+    m.insert(NAME_TABLE[op::TRAP as usize], (op::TRAP, Trap));
+    m.insert(NAME_TABLE[op::GET as usize], (op::GET, Get));
+    m.insert(NAME_TABLE[op::PUT as usize], (op::PUT, Put));
 
     m
 }
@@ -118,18 +116,9 @@ fn parse_reg_or_imm(s: &str) -> Result<(u8, bool), String> {
 /// Special register name -> encoding
 fn parse_special_reg(s: &str) -> Result<u8, String> {
     let s = s.trim().to_lowercase();
-    let mapping = [
-        ("ra", 21), ("rb", 0), ("rc", 8), ("rd", 1), ("re", 2),
-        ("rf", 22), ("rg", 19), ("rh", 3), ("ri", 12), ("rj", 4),
-        ("rk", 15), ("rl", 20), ("rm", 5), ("rn", 9), ("ro", 10),
-        ("rp", 23), ("rq", 16), ("rr", 6), ("rs", 11), ("rt", 13),
-        ("ru", 17), ("rv", 18), ("rw", 24), ("rx", 25), ("ry", 26),
-        ("rz", 27), ("rbb", 7), ("rtt", 14), ("rww", 28),
-        ("rxx", 29), ("ryy", 30), ("rzz", 31),
-    ];
-    for &(name, enc) in &mapping {
-        if s == name {
-            return Ok(enc);
+    for &sr in &SpecialRegister::ALL {
+        if s == sr.name() {
+            return Ok(sr.encoding());
         }
     }
     // Also accept raw number
@@ -301,21 +290,10 @@ fn extract_label(line: &str) -> (Option<&str>, &str) {
 
     // Check if it's a known mnemonic or data directive (no label)
     let upper = first_word.trim_end_matches(':').to_uppercase();
-    let known_mnemonics = [
-        "ADD", "SUB", "MUL", "DIV", "CMP", "NEG",
-        "SL", "SR", "SRU", "AND", "OR", "XOR",
-        "CSZ", "CSNZ",
-        "LDB", "LDBU", "LDW", "LDT", "LDO",
-        "STB", "STW", "STT", "STO",
-        "SETH", "SETMH", "SETML", "SETL",
-        "ORH", "ORMH", "ORML", "ORL",
-        "BZ", "BNZ", "BP", "BN", "BNN",
-        "JMP", "GO", "GETA",
-        "TRAP", "GET", "PUT",
-        "BYTE", "WYDE", "TETRA", "OCTA",
-    ];
+    let is_data_directive = matches!(upper.as_str(), "BYTE" | "WYDE" | "TETRA" | "OCTA");
+    let is_instruction = NAME_TABLE.iter().any(|&n| n.eq_ignore_ascii_case(&upper));
 
-    if known_mnemonics.contains(&upper.as_str()) {
+    if is_data_directive || is_instruction {
         return (None, line_trimmed);
     }
 
