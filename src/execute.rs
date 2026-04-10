@@ -151,12 +151,12 @@ impl Machine {
             // ---- 内存加载 ----
             op::LDB | op::LDBI => {
                 let addr = self.calc_addr(inst.y, inst.z, is_imm);
-                let val = self.memory.read_byte(addr) as i8 as i64 as u64;
+                let val = self.memory.read_u8(addr) as i8 as i64 as u64;
                 self.general.set(inst.x, val);
             }
             op::LDBU | op::LDBUI => {
                 let addr = self.calc_addr(inst.y, inst.z, is_imm);
-                let val = self.memory.read_byte(addr) as u64;
+                let val = self.memory.read_u8(addr) as u64;
                 self.general.set(inst.x, val);
             }
             op::LDW | op::LDWI => {
@@ -178,7 +178,7 @@ impl Machine {
             // ---- 内存存储 ----
             op::STB | op::STBI => {
                 let addr = self.calc_addr(inst.y, inst.z, is_imm);
-                self.memory.write_byte(addr, self.general.get(inst.x) as u8);
+                self.memory.write_u8(addr, self.general.get(inst.x) as u8);
             }
             op::STW | op::STWI => {
                 let addr = self.calc_addr(inst.y, inst.z, is_imm);
@@ -356,7 +356,7 @@ impl Machine {
             (0, 1, 1) => {
                 let mut addr = self.general.get(255);
                 loop {
-                    let ch = self.memory.read_byte(addr);
+                    let ch = self.memory.read_u8(addr);
                     if ch == 0 {
                         break;
                     }
@@ -372,7 +372,7 @@ impl Machine {
     /// Load raw bytes into memory at the given base address
     pub fn load_raw(&mut self, base_addr: u64, bytes: &[u8]) {
         for (i, &b) in bytes.iter().enumerate() {
-            self.memory.write_byte(base_addr.wrapping_add(i as u64), b);
+            self.memory.write_u8(base_addr.wrapping_add(i as u64), b);
         }
     }
 
