@@ -11,7 +11,6 @@ pub enum InputMode {
 pub struct App {
     pub machine: Machine,
     pub source_lines: Vec<String>,
-    pub line_to_addr: HashMap<usize, u64>,
     pub addr_to_line: HashMap<u64, usize>,
     pub breakpoints: HashSet<usize>,
     pub output: String,
@@ -34,7 +33,6 @@ impl App {
         Self {
             machine,
             source_lines: debug_info.source_lines,
-            line_to_addr: debug_info.line_to_offset,
             addr_to_line: debug_info.offset_to_line,
             breakpoints: HashSet::new(),
             output: String::new(),
@@ -235,15 +233,6 @@ mod tests {
         app.step();
         let regs = app.nonzero_general_regs();
         assert!(regs.iter().any(|&(i, v)| i == 5 && v == 100));
-    }
-
-    #[test]
-    fn line_to_addr_mapping() {
-        let src = "        SETL $1,1\n        SETL $2,2\n        TRAP 0,0,0";
-        let app = make_app(src);
-        assert_eq!(app.line_to_addr[&0], 0);
-        assert_eq!(app.line_to_addr[&1], 4);
-        assert_eq!(app.line_to_addr[&2], 8);
     }
 
     #[test]
