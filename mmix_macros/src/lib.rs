@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::{Ident, LitInt, LitStr, Result, Token, Visibility, braced};
+use syn::{Ident, LitInt, LitStr, Result, Token, Visibility, braced, parenthesized};
 
 struct RegisterDef {
     name: Ident,
@@ -173,6 +173,102 @@ pub fn define_special_registers(tokens: TokenStream) -> TokenStream {
                 #( dbg.field(#reg_names, &format_args!("{:#018x}", self.#reg_idents)); )*
                 dbg.finish()
             }
+        }
+    };
+
+    expanded.into()
+}
+
+// ── define_opcodes! ──────────────────────────────────────────────────────
+
+/// A single opcode entry: `NAME(v, mu)`
+struct OpcodeDef {
+    name: Ident,
+    v: LitInt,
+    mu: LitInt,
+}
+
+impl Parse for OpcodeDef {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let name: Ident = input.parse()?;
+        let content;
+        parenthesized!(content in input);
+        let v: LitInt = content.parse()?;
+        content.parse::<Token![,]>()?;
+        let mu: LitInt = content.parse()?;
+        Ok(Self { name, v, mu })
+    }
+}
+
+struct OpcodesInput {
+    entries: Vec<OpcodeDef>,
+}
+
+impl Parse for OpcodesInput {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let mut entries = Vec::new();
+        while !input.is_empty() {
+            entries.push(input.parse::<OpcodeDef>()?);
+            // Allow optional trailing comma
+            let _ = input.parse::<Token![,]>();
+        }
+        Ok(Self { entries })
+    }
+}
+
+/// Proc macro that turns a visual 256-entry opcode table into:
+/// - `pub static TIMING_TABLE: [Timing; 256]`
+/// - `pub static NAME_TABLE: [&str; 256]`
+/// - `pub mod op { pub const NAME: u8 = 0xNN; ... }`
+///
+/// Each entry is `NAME(v, mu)`. The position (0..255) determines the opcode value.
+/// Names starting with `_` (e.g. `_2ADDU`) have the `_` stripped in `NAME_TABLE`.
+#[proc_macro]
+pub fn define_opcodes(tokens: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(tokens as OpcodesInput);
+    let entries = &input.entries;
+
+    if entries.len() != 256 {
+        return syn::Error::new(
+            Span::call_site(),
+            format!("expected exactly 256 opcode entries, got {}", entries.len()),
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    // Build timing array entries
+    let timing_entries = entries.iter().map(|e| {
+        let v = &e.v;
+        let mu = &e.mu;
+        quote! { Timing::new(#v, #mu) }
+    });
+
+    // Build name table entries — strip leading `_` for names like `_2ADDU`
+    let name_entries = entries.iter().map(|e| {
+        let raw = e.name.to_string();
+        let display = raw.strip_prefix('_').unwrap_or(&raw);
+        quote! { #display }
+    });
+
+    // Build op constants — each entry gets `pub const NAME: u8 = index;`
+    let op_consts = entries.iter().enumerate().map(|(i, e)| {
+        let name = &e.name;
+        let idx = i as u8;
+        quote! { pub const #name: u8 = #idx; }
+    });
+
+    let expanded = quote! {
+        pub static TIMING_TABLE: [Timing; 256] = [
+            #( #timing_entries ),*
+        ];
+
+        pub static NAME_TABLE: [&str; 256] = [
+            #( #name_entries ),*
+        ];
+
+        pub mod op {
+            #( #op_consts )*
         }
     };
 

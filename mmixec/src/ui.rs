@@ -114,10 +114,17 @@ fn draw_register_panel(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
     )));
 
-    // Always show PC
+    // Always show PC and timing
     lines.push(Line::from(vec![
         Span::styled(format!("{:<4}", "@"), Style::default().fg(Color::Green)),
         Span::styled(format!(" = {:#018x}", app.machine.pc), Style::default().fg(Color::White)),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<11}", "cycles (υ)"), Style::default().fg(Color::Green)),
+        Span::styled(format!(" = {}", app.machine.oops), Style::default().fg(Color::White)),
+        Span::raw("  "),
+        Span::styled(format!("{:<9}", "mems (μ)"), Style::default().fg(Color::Green)),
+        Span::styled(format!(" = {}", app.machine.mems), Style::default().fg(Color::White)),
     ]));
 
     for (name, val) in app.all_special_regs() {

@@ -11,6 +11,10 @@ pub struct Machine {
     pub pc: u64,
     pub halted: bool,
     pub output_buffer: Vec<u8>,
+    /// Total clock cycles (υ)
+    pub oops: u64,
+    /// Total memory accesses (μ)
+    pub mems: u64,
 }
 
 impl Machine {
@@ -22,6 +26,8 @@ impl Machine {
             pc: 0,
             halted: false,
             output_buffer: Vec::new(),
+            oops: 0,
+            mems: 0,
         }
     }
 
@@ -32,6 +38,8 @@ impl Machine {
         self.pc = 0;
         self.halted = false;
         self.output_buffer.clear();
+        self.oops = 0;
+        self.mems = 0;
     }
 }
 
