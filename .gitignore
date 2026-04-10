@@ -1,1 +1,14 @@
 /target
+.vscode
+/
+*.swp
+*.swo
+*~
+.DS_Store
+Cargo.lock
+*.iml
+.idea/
+*.log
+dist/
+build/
+*.mmb
