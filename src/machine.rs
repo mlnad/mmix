@@ -9,6 +9,7 @@ pub struct Machine {
     pub general: GeneralRegisters,
     pub memory: Memory,
     pub halted: bool,
+    pub output_buffer: Vec<u8>,
 }
 
 impl Machine {
@@ -18,6 +19,7 @@ impl Machine {
             general: GeneralRegisters::new(),
             memory: Memory::new(),
             halted: false,
+            output_buffer: Vec::new(),
         }
     }
 
@@ -26,6 +28,7 @@ impl Machine {
         self.general = GeneralRegisters::new();
         self.memory = Memory::new();
         self.halted = false;
+        self.output_buffer.clear();
     }
 }
 

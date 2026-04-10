@@ -7,4 +7,4 @@ edition = "2024"
 mmix_macros = { path = "mmix_macros" }
 
 [workspace]
-members = ["mmix_macros"]
+members = ["mmix_macros", "mmixal", "mmixec"]

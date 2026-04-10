@@ -360,7 +360,7 @@ impl Machine {
                     if ch == 0 {
                         break;
                     }
-                    print!("{}", ch as char);
+                    self.output_buffer.push(ch);
                     addr = addr.wrapping_add(1);
                 }
                 Ok(())
