@@ -1,3 +1,4 @@
 [workspace]
 members = ["mmix_core", "mmix_macros", "mmixal", "mmixec"]
 resolver = "3"
+package.license = "Apache-2.0"
