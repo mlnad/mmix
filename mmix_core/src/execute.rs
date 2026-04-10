@@ -1,6 +1,7 @@
 /// MMIX executor
 use crate::{
-    instruction::{RawInst, op},
+    instruction::RawInst,
+    opcodes::op,
     machine::Machine,
     register::SpecialRegister,
 };
@@ -548,7 +549,7 @@ impl Machine {
             }
         }
 
-        let t = crate::instruction::timing(inst.op);
+        let t = crate::opcodes::timing(inst.op);
         self.oops += t.v;
         self.mems += t.mu;
 
@@ -623,7 +624,8 @@ impl Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instruction::{RawInst, op};
+    use crate::instruction::RawInst;
+    use crate::opcodes::op;
 
     /// Helper: create a machine, write one instruction at addr 0, set PC=0, step once
     fn exec_one(opcode: u8, x: u8, y: u8, z: u8) -> Machine {

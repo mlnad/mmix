@@ -200,29 +200,90 @@ impl Parse for OpcodeDef {
     }
 }
 
+/// Output configuration block: `output { timing: IDENT, names: IDENT, ops: IDENT, }`
+struct OutputConfig {
+    timing_name: Ident,
+    name_table_name: Ident,
+    op_mod_name: Ident,
+}
+
+impl Parse for OutputConfig {
+    fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let content;
+        braced!(content in input);
+
+        let mut timing_name: Option<Ident> = None;
+        let mut name_table_name: Option<Ident> = None;
+        let mut op_mod_name: Option<Ident> = None;
+
+        while !content.is_empty() {
+            let key: Ident = content.parse()?;
+            content.parse::<Token![:]>()?;
+            let value: Ident = content.parse()?;
+            let _ = content.parse::<Token![,]>();
+
+            match key.to_string().as_str() {
+                "timing" => timing_name = Some(value),
+                "names" => name_table_name = Some(value),
+                "ops" => op_mod_name = Some(value),
+                _ => return Err(syn::Error::new(key.span(), format!("unknown output key `{key}`, expected `timing`, `names`, or `ops`"))),
+            }
+        }
+
+        let timing_name = timing_name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `timing` in output block"))?;
+        let name_table_name = name_table_name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `names` in output block"))?;
+        let op_mod_name = op_mod_name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `ops` in output block"))?;
+
+        Ok(Self { timing_name, name_table_name, op_mod_name })
+    }
+}
+
 struct OpcodesInput {
+    output: OutputConfig,
     entries: Vec<OpcodeDef>,
 }
 
 impl Parse for OpcodesInput {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
+        // Parse `output { ... }` block
+        let kw: Ident = input.parse()?;
+        if kw != "output" {
+            return Err(syn::Error::new(kw.span(), "expected `output` block"));
+        }
+        let output: OutputConfig = input.parse()?;
+
+        // Parse opcode entries
         let mut entries = Vec::new();
         while !input.is_empty() {
             entries.push(input.parse::<OpcodeDef>()?);
             // Allow optional trailing comma
             let _ = input.parse::<Token![,]>();
         }
-        Ok(Self { entries })
+        Ok(Self { output, entries })
     }
 }
 
-/// Proc macro that turns a visual 256-entry opcode table into:
-/// - `pub static TIMING_TABLE: [Timing; 256]`
-/// - `pub static NAME_TABLE: [&str; 256]`
-/// - `pub mod op { pub const NAME: u8 = 0xNN; ... }`
+/// Proc macro that turns a visual 256-entry opcode table into three items
+/// whose names are specified by an `output { ... }` configuration block.
+///
+/// ```ignore
+/// mmix_macros::define_opcodes! {
+///     output {
+///         timing: TIMING_TABLE,
+///         names:  NAME_TABLE,
+///         ops:    op,
+///     }
+///     TRAP(5,0), FCMP(1,0), ...
+/// }
+/// ```
+///
+/// Generates:
+/// - `pub static <timing>: [Timing; 256]`
+/// - `pub static <names>: [&str; 256]`
+/// - `pub mod <ops> { pub const NAME: u8 = 0xNN; ... }`
 ///
 /// Each entry is `NAME(v, mu)`. The position (0..255) determines the opcode value.
-/// Names starting with `_` (e.g. `_2ADDU`) have the `_` stripped in `NAME_TABLE`.
+/// Names starting with `_` (e.g. `_2ADDU`) have the `_` stripped in the name table.
 #[proc_macro]
 pub fn define_opcodes(tokens: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(tokens as OpcodesInput);
@@ -236,6 +297,10 @@ pub fn define_opcodes(tokens: TokenStream) -> TokenStream {
         .to_compile_error()
         .into();
     }
+
+    let tn = &input.output.timing_name;
+    let nn = &input.output.name_table_name;
+    let om = &input.output.op_mod_name;
 
     // Build timing array entries
     let timing_entries = entries.iter().map(|e| {
@@ -259,15 +324,15 @@ pub fn define_opcodes(tokens: TokenStream) -> TokenStream {
     });
 
     let expanded = quote! {
-        pub static TIMING_TABLE: [Timing; 256] = [
+        pub static #tn: [Timing; 256] = [
             #( #timing_entries ),*
         ];
 
-        pub static NAME_TABLE: [&str; 256] = [
+        pub static #nn: [&str; 256] = [
             #( #name_entries ),*
         ];
 
-        pub mod op {
+        pub mod #om {
             #( #op_consts )*
         }
     };

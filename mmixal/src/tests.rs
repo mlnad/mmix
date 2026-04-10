@@ -1,5 +1,5 @@
 use super::*;
-use mmix::op;
+use mmix_core::op;
 
 // ─── Basic instruction encoding ───
 
