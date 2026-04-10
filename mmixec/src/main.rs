@@ -23,17 +23,37 @@ struct Cli {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    let source_path = std::path::Path::new(&cli.file);
 
     // Read source file
-    let source = std::fs::read_to_string(&cli.file)
+    let source = std::fs::read_to_string(source_path)
         .map_err(|e| format!("Failed to read '{}': {}", cli.file, e))?;
 
     // Assemble
     let asm_result = mmixal::assemble(&source)
         .map_err(|e| format!("Assembly error: {}", e))?;
 
+    // Write .mmb file (same name, different extension)
+    let mmb_path = source_path.with_extension("mmb");
+    mmixal::binary::save_mmb(&mmb_path, &asm_result, &source, &cli.file)
+        .map_err(|e| format!("Failed to write '{}': {}", mmb_path.display(), e))?;
+
+    // Load .mmb file back
+    let (entry_addr, code, debug_info) = mmixal::binary::load_mmb(&mmb_path)
+        .map_err(|e| format!("Failed to read '{}': {}", mmb_path.display(), e))?;
+
+    let debug_info = debug_info.ok_or_else(|| {
+        format!(
+            "The generated MMIX binary '{}' does not contain debug information. \
+This can happen if the file was written incorrectly, became corrupted, or was produced by an incompatible tool version. \
+Try rebuilding the .mmb file from '{}', then rerun mmixec. If the problem persists, verify that your assembler and mmixec versions are compatible.",
+            mmb_path.display(),
+            cli.file
+        )
+    })?;
+
     // Initialize app
-    let mut app = App::new(&source, asm_result);
+    let mut app = App::from_binary(entry_addr, &code, debug_info);
 
     // Setup terminal
     enable_raw_mode()?;

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use mmix::{Machine, SpecialRegister};
-use mmixal::AssembleResult;
+use mmixal::DebugInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputMode {
@@ -26,18 +26,16 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(source: &str, asm_result: AssembleResult) -> Self {
+    pub fn from_binary(entry_addr: u64, code: &[u8], debug_info: DebugInfo) -> Self {
         let mut machine = Machine::new();
-        machine.load_raw(asm_result.entry_addr, &asm_result.bytes);
-        machine.set_entry(asm_result.entry_addr);
-
-        let source_lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
+        machine.load_raw(entry_addr, code);
+        machine.set_entry(entry_addr);
 
         Self {
             machine,
-            source_lines,
-            line_to_addr: asm_result.line_to_offset,
-            addr_to_line: asm_result.offset_to_line,
+            source_lines: debug_info.source_lines,
+            line_to_addr: debug_info.line_to_offset,
+            addr_to_line: debug_info.offset_to_line,
             breakpoints: HashSet::new(),
             output: String::new(),
             running: false,
