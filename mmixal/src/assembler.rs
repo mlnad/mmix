@@ -1,106 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use mmix_core::{op, NAME_TABLE, SpecialRegister};
+use crate::encode::*;
+use crate::parse::*;
 use crate::{AssembleResult, AssembleError};
-
-/// Map mnemonic -> (base opcode, OperandKind)
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum OperandKind {
-    /// $X, $Y, $Z  or  $X, $Y, Z  (auto immediate variant: base_op + 1)
-    ThreeReg,
-    /// $X, YZ  (16-bit immediate, e.g. SETH, SETL)
-    RegImm16,
-    /// $X, YZ  (branch relative: forward label or offset)
-    Branch,
-    /// TRAP X,Y,Z
-    Trap,
-    /// GET $X, special_reg_number
-    Get,
-    /// PUT special_reg_number, $Z or imm (PUT/PUTI)
-    Put,
-    /// JMP label (24-bit relative)
-    Jump,
-    /// $X, $Y, $Z or $X, $Y, Z  -- NEG style (Y is inline constant)
-    NegStyle,
-    /// SET $X,$Y (-> ORI $X,$Y,0) or SET $X,imm16 (-> SETL $X,imm16)
-    Set,
-}
-
-fn build_opcode_table() -> HashMap<&'static str, (u8, OperandKind)> {
-    use OperandKind::*;
-    let mut m = HashMap::new();
-
-    // Arithmetic
-    for &base in &[
-        op::ADD, op::SUB, op::MUL, op::DIV, op::CMP,
-        op::SL, op::SR, op::SRU,
-        op::AND, op::OR, op::XOR,
-        op::CSZ, op::CSNZ,
-    ] {
-        m.insert(NAME_TABLE[base as usize], (base, ThreeReg));
-    }
-
-    m.insert(NAME_TABLE[op::NEG as usize], (op::NEG, NegStyle));
-
-    // Memory
-    for &base in &[
-        op::LDB, op::LDBU, op::LDW, op::LDT, op::LDO,
-        op::STB, op::STW, op::STT, op::STO,
-        op::GO,
-    ] {
-        m.insert(NAME_TABLE[base as usize], (base, ThreeReg));
-    }
-
-    // Constant loads / ORx
-    for &base in &[
-        op::SETH, op::SETMH, op::SETML, op::SETL,
-        op::ORH, op::ORMH, op::ORML, op::ORL,
-    ] {
-        m.insert(NAME_TABLE[base as usize], (base, RegImm16));
-    }
-
-    // Branches
-    for &base in &[
-        op::BZ, op::BNZ, op::BP, op::BN, op::BNN,
-        op::GETA,
-    ] {
-        m.insert(NAME_TABLE[base as usize], (base, Branch));
-    }
-
-    m.insert(NAME_TABLE[op::JMP as usize], (op::JMP, Jump));
-    m.insert(NAME_TABLE[op::TRAP as usize], (op::TRAP, Trap));
-    m.insert(NAME_TABLE[op::GET as usize], (op::GET, Get));
-    m.insert(NAME_TABLE[op::PUT as usize], (op::PUT, Put));
-
-    // Aliases
-    m.insert("SET", (op::ORI, Set));   // SET $X,$Y -> ORI $X,$Y,0; SET $X,imm -> SETL $X,imm
-    m.insert("LDA", (op::ADDU, ThreeReg)); // LDA $X,$Y,$Z -> ADDU $X,$Y,$Z
-
-    m
-}
-
-/// Build a set of all known mnemonics (machine instructions + aliases + pseudo-ops)
-/// for O(1) lookup in extract_label.
-fn build_mnemonic_set(optable: &HashMap<&str, (u8, OperandKind)>) -> HashSet<String> {
-    let mut s: HashSet<String> = optable.keys().map(|k| k.to_string()).collect();
-    // Also include all NAME_TABLE entries (covers immediate variants like ADDI etc.)
-    for &name in &NAME_TABLE {
-        s.insert(name.to_string());
-    }
-    // Pseudo-ops that are not machine instructions
-    for &pseudo in &["BYTE", "WYDE", "TETRA", "OCTA", "IS"] {
-        s.insert(pseudo.to_string());
-    }
-    s
-}
-
-/// Parse a register operand like "$0" or "$255", returns register number
-fn parse_reg(s: &str) -> Result<u8, String> {
-    let s = s.trim();
-    if !s.starts_with('$') {
-        return Err(format!("expected register (e.g. $0), got '{}'", s));
-    }
-    s[1..].parse::<u8>().map_err(|_| format!("invalid register '{}'", s))
-}
 
 /// Parse a number: decimal or 0x hex
 fn parse_number(s: &str) -> Result<u64, String> {
@@ -118,46 +19,6 @@ fn parse_number(s: &str) -> Result<u64, String> {
             s.parse::<u64>().map_err(|e| format!("invalid number '{}': {}", s, e))
         }
     }
-}
-
-/// Parse a register OR immediate. Returns (value, is_immediate).
-fn parse_reg_or_imm(s: &str) -> Result<(u8, bool), String> {
-    let s = s.trim();
-    if s.starts_with('$') {
-        Ok((parse_reg(s)?, false))
-    } else {
-        let v = parse_number(s)?;
-        if v > 255 {
-            return Err(format!("immediate {} out of range 0..255", v));
-        }
-        Ok((v as u8, true))
-    }
-}
-
-/// Like parse_reg_or_imm but also resolves labels/symbols.
-fn parse_reg_or_imm_with_labels(s: &str, labels: &HashMap<String, u64>, cur_offset: u64) -> Result<(u8, bool), String> {
-    let s = s.trim();
-    if s.starts_with('$') {
-        Ok((parse_reg(s)?, false))
-    } else {
-        let v = resolve_label_or_number(s, labels, cur_offset)?;
-        if v > 255 {
-            return Err(format!("immediate {} out of range 0..255", v));
-        }
-        Ok((v as u8, true))
-    }
-}
-
-/// Special register name -> encoding
-fn parse_special_reg(s: &str) -> Result<u8, String> {
-    let s = s.trim().to_lowercase();
-    for &sr in &SpecialRegister::ALL {
-        if s == sr.name() {
-            return Ok(sr.encoding());
-        }
-    }
-    // Also accept raw number
-    s.parse::<u8>().map_err(|_| format!("unknown special register '{}'", s))
 }
 
 /// Strip comment (% or ;) and trim
@@ -316,7 +177,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
         line_to_offset.insert(line_idx, cur_offset);
         offset_to_line.insert(cur_offset, line_idx);
 
-        let (base_op, kind) = optable.get(mnem.as_str())
+        let entry = optable.get(mnem.as_str())
             .ok_or_else(|| AssembleError {
                 line: line_idx,
                 message: format!("unknown instruction '{}'", mnem),
@@ -328,7 +189,14 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
             args_str.split(',').collect()
         };
 
-        let word = encode_instruction(*base_op, *kind, &args, cur_offset, &labels, line_idx)?;
+        let word = match *entry {
+            InstrEntry::Real { base_op, format } => {
+                encode_instruction(base_op, format, &args, cur_offset, &labels, line_idx)?
+            }
+            InstrEntry::Alias(lowering) => {
+                encode_alias(lowering, &args, cur_offset, &labels, line_idx)?
+            }
+        };
         bytes.extend_from_slice(&word.to_be_bytes());
         cur_offset += 4;
     }
@@ -403,166 +271,4 @@ fn emit_data(args: &str, unit_size: usize, line: usize) -> Result<Vec<u8>, Assem
         }
     }
     Ok(out)
-}
-
-fn parse_string_literal(s: &str) -> Result<String, String> {
-    if !s.starts_with('"') {
-        return Err("expected string literal".into());
-    }
-    let end = s[1..].find('"').ok_or("unterminated string literal")?;
-    let inner = &s[1..1 + end];
-    let mut result = String::new();
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('\\') => result.push('\\'),
-                Some('"') => result.push('"'),
-                Some('0') => result.push('\0'),
-                Some(other) => {
-                    result.push('\\');
-                    result.push(other);
-                }
-                None => return Err("trailing backslash".into()),
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    Ok(result)
-}
-
-fn resolve_label_or_number(s: &str, labels: &HashMap<String, u64>, cur_offset: u64) -> Result<u64, String> {
-    let s = s.trim();
-    if s == "@" {
-        return Ok(cur_offset);
-    }
-    if s.starts_with('$') || s.starts_with('#') || s.starts_with("0x") || s.starts_with("0X")
-        || s.starts_with('-') || s.chars().next().is_some_and(|c| c.is_ascii_digit())
-    {
-        parse_number(s)
-    } else {
-        labels.get(s).copied().ok_or_else(|| format!("undefined label '{}'", s))
-    }
-}
-
-fn encode_instruction(
-    base_op: u8,
-    kind: OperandKind,
-    args: &[&str],
-    cur_offset: u64,
-    labels: &HashMap<String, u64>,
-    line: usize,
-) -> Result<u32, AssembleError> {
-    let err = |msg: String| AssembleError { line, message: msg };
-
-    match kind {
-        OperandKind::ThreeReg => {
-            if args.len() != 3 {
-                return Err(err(format!("expected 3 operands, got {}", args.len())));
-            }
-            let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let y = parse_reg(args[1]).map_err(|e| err(e))?;
-            let (z, is_imm) = parse_reg_or_imm_with_labels(args[2], labels, cur_offset).map_err(|e| err(e))?;
-            let op = if is_imm { base_op + 1 } else { base_op };
-            Ok(((op as u32) << 24) | ((x as u32) << 16) | ((y as u32) << 8) | (z as u32))
-        }
-        OperandKind::NegStyle => {
-            if args.len() != 3 {
-                return Err(err(format!("expected 3 operands, got {}", args.len())));
-            }
-            let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let y_val = resolve_label_or_number(args[1].trim(), labels, cur_offset).map_err(|e| err(e))? as u8;
-            let (z, is_imm) = parse_reg_or_imm_with_labels(args[2], labels, cur_offset).map_err(|e| err(e))?;
-            let op = if is_imm { base_op + 1 } else { base_op };
-            Ok(((op as u32) << 24) | ((x as u32) << 16) | ((y_val as u32) << 8) | (z as u32))
-        }
-        OperandKind::RegImm16 => {
-            if args.len() != 2 {
-                return Err(err(format!("expected 2 operands, got {}", args.len())));
-            }
-            let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let yz = resolve_label_or_number(args[1].trim(), labels, cur_offset).map_err(|e| err(e))? as u16;
-            Ok(((base_op as u32) << 24) | ((x as u32) << 16) | (yz as u32))
-        }
-        OperandKind::Branch => {
-            if args.len() != 2 {
-                return Err(err(format!("expected 2 operands, got {}", args.len())));
-            }
-            let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let target = resolve_label_or_number(args[1], labels, cur_offset).map_err(|e| err(e))?;
-            let diff = target as i64 - cur_offset as i64;
-            if diff < 0 {
-                // Backward branch
-                let offset = ((-diff) / 4) as u64;
-                let yz = (0x10000 - offset) as u16;
-                Ok((((base_op + 1) as u32) << 24) | ((x as u32) << 16) | (yz as u32))
-            } else {
-                let yz = (diff / 4) as u16;
-                Ok(((base_op as u32) << 24) | ((x as u32) << 16) | (yz as u32))
-            }
-        }
-        OperandKind::Jump => {
-            if args.len() != 1 {
-                return Err(err(format!("expected 1 operand, got {}", args.len())));
-            }
-            let target = resolve_label_or_number(args[0], labels, cur_offset).map_err(|e| err(e))?;
-            let diff = target as i64 - cur_offset as i64;
-            if diff < 0 {
-                let offset = ((-diff) / 4) as u64;
-                let xyz = (0x1000000u64 - offset) as u32 & 0xFFFFFF;
-                Ok((((base_op + 1) as u32) << 24) | xyz)
-            } else {
-                let xyz = (diff / 4) as u32 & 0xFFFFFF;
-                Ok(((base_op as u32) << 24) | xyz)
-            }
-        }
-        OperandKind::Trap => {
-            if args.len() != 3 {
-                return Err(err(format!("expected 3 operands, got {}", args.len())));
-            }
-            let x = parse_number(args[0].trim()).map_err(|e| err(e))? as u8;
-            let y = parse_number(args[1].trim()).map_err(|e| err(e))? as u8;
-            let z = parse_number(args[2].trim()).map_err(|e| err(e))? as u8;
-            Ok(((base_op as u32) << 24) | ((x as u32) << 16) | ((y as u32) << 8) | (z as u32))
-        }
-        OperandKind::Get => {
-            if args.len() != 2 {
-                return Err(err(format!("expected 2 operands, got {}", args.len())));
-            }
-            let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let sr = parse_special_reg(args[1]).map_err(|e| err(e))?;
-            Ok(((base_op as u32) << 24) | ((x as u32) << 16) | (sr as u32))
-        }
-        OperandKind::Put => {
-            if args.len() != 2 {
-                return Err(err(format!("expected 2 operands, got {}", args.len())));
-            }
-            let sr = parse_special_reg(args[0]).map_err(|e| err(e))?;
-            let (z, is_imm) = parse_reg_or_imm(args[1]).map_err(|e| err(e))?;
-            let op = if is_imm { base_op + 1 } else { base_op };
-            Ok(((op as u32) << 24) | ((sr as u32) << 16) | (z as u32))
-        }
-        OperandKind::Set => {
-            // SET $X,$Y  -> ORI $X,$Y,0
-            // SET $X,imm -> SETL $X,imm
-            if args.len() != 2 {
-                return Err(err(format!("expected 2 operands, got {}", args.len())));
-            }
-            let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let second = args[1].trim();
-            if second.starts_with('$') {
-                let y = parse_reg(second).map_err(|e| err(e))?;
-                // ORI $X,$Y,0
-                Ok(((op::ORI as u32) << 24) | ((x as u32) << 16) | ((y as u32) << 8))
-            } else {
-                let val = resolve_label_or_number(second, labels, cur_offset).map_err(|e| err(e))?;
-                let yz = val as u16;
-                // SETL $X,yz
-                Ok(((op::SETL as u32) << 24) | ((x as u32) << 16) | (yz as u32))
-            }
-        }
-    }
 }

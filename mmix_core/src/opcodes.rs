@@ -1,3 +1,38 @@
+/// Operand format classification for each opcode.
+///
+/// Used by the assembler to determine how to parse and encode operands
+/// without hardcoding per-opcode logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperandFormat {
+    /// $X, $Y, $Z | $X, $Y, Z — auto immediate variant (base_op + 1)
+    ThreeReg,
+    /// $X, YZ — 16-bit immediate (SETH, SETL, ORH, etc.)
+    RegImm16,
+    /// $X, YZ — branch relative (BZ, BNZ, GETA, etc.)
+    Branch,
+    /// XYZ — 24-bit relative (JMP)
+    Jump,
+    /// $X, Y, $Z | $X, Y, Z — NEG-style (Y is inline constant)
+    NegStyle,
+    /// X, Y, Z — three immediates (TRAP, TRIP)
+    Trap,
+    /// GET $X, special_reg
+    Get,
+    /// PUT special_reg, $Z | imm
+    Put,
+    /// POP X, YZ — special format
+    Pop,
+    /// No operands (RESUME, SAVE, UNSAVE, SYNC, SWYM)
+    Special,
+    /// PUSHJ/PUSHGO — register-push variants
+    PushJ,
+}
+
+/// Return the operand format for a given opcode.
+pub fn format(opcode: u8) -> OperandFormat {
+    FORMAT_TABLE[opcode as usize]
+}
+
 /// Instruction timing cost, in units of υ (clock cycles) and μ (memory accesses).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timing {
@@ -31,90 +66,91 @@ pub fn name(opcode: u8) -> &'static str {
 #[rustfmt::skip]
 mmix_macros::define_opcodes! {
     output {
-        timing: TIMING_TABLE,
-        names:  NAME_TABLE,
-        ops:    op,
+        timing:  TIMING_TABLE,
+        names:   NAME_TABLE,
+        ops:     op,
+        formats: FORMAT_TABLE,
     }
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            TRAP(5,0),     FCMP(1,0),     FUN(1,0),      FEQL(1,0),     FADD(4,0),     FIX(4,0),      FSUB(4,0),     FIXU(4,0),
-//  #0x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            FLOT(4,0),     FLOTI(4,0),    FLOTU(4,0),    FLOTUI(4,0),   SFLOT(4,0),    SFLOTI(4,0),   SFLOTU(4,0),   SFLOTUI(4,0),
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            TRAP(5,0,Trap),        FCMP(1,0,ThreeReg),    FUN(1,0,ThreeReg),     FEQL(1,0,ThreeReg),    FADD(4,0,ThreeReg),    FIX(4,0,ThreeReg),     FSUB(4,0,ThreeReg),    FIXU(4,0,ThreeReg),
+//  #0x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            FLOT(4,0,ThreeReg),    FLOTI(4,0,ThreeReg),   FLOTU(4,0,ThreeReg),   FLOTUI(4,0,ThreeReg),  SFLOT(4,0,ThreeReg),   SFLOTI(4,0,ThreeReg),  SFLOTU(4,0,ThreeReg),  SFLOTUI(4,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            FMUL(4,0),     FCMPE(4,0),    FUNE(1,0),     FEQLE(4,0),    FDIV(40,0),    FSQRT(40,0),   FREM(4,0),     FINT(4,0),
-//  #1x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            MUL(10,0),     MULI(10,0),    MULU(10,0),    MULUI(10,0),   DIV(60,0),     DIVI(60,0),    DIVU(60,0),    DIVUI(60,0),
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            FMUL(4,0,ThreeReg),    FCMPE(4,0,ThreeReg),   FUNE(1,0,ThreeReg),    FEQLE(4,0,ThreeReg),   FDIV(40,0,ThreeReg),   FSQRT(40,0,ThreeReg),  FREM(4,0,ThreeReg),    FINT(4,0,ThreeReg),
+//  #1x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            MUL(10,0,ThreeReg),    MULI(10,0,ThreeReg),   MULU(10,0,ThreeReg),   MULUI(10,0,ThreeReg),  DIV(60,0,ThreeReg),    DIVI(60,0,ThreeReg),   DIVU(60,0,ThreeReg),   DIVUI(60,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            ADD(1,0),      ADDI(1,0),     ADDU(1,0),     ADDUI(1,0),    SUB(1,0),      SUBI(1,0),     SUBU(1,0),     SUBUI(1,0),
-//  #2x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            _2ADDU(1,0),   _2ADDUI(1,0),  _4ADDU(1,0),   _4ADDUI(1,0),  _8ADDU(1,0),   _8ADDUI(1,0),  _16ADDU(1,0),  _16ADDUI(1,0),
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            ADD(1,0,ThreeReg),     ADDI(1,0,ThreeReg),    ADDU(1,0,ThreeReg),    ADDUI(1,0,ThreeReg),   SUB(1,0,ThreeReg),     SUBI(1,0,ThreeReg),    SUBU(1,0,ThreeReg),    SUBUI(1,0,ThreeReg),
+//  #2x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            _2ADDU(1,0,ThreeReg),  _2ADDUI(1,0,ThreeReg), _4ADDU(1,0,ThreeReg),  _4ADDUI(1,0,ThreeReg), _8ADDU(1,0,ThreeReg),  _8ADDUI(1,0,ThreeReg), _16ADDU(1,0,ThreeReg), _16ADDUI(1,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            CMP(1,0),      CMPI(1,0),     CMPU(1,0),     CMPUI(1,0),    NEG(1,0),      NEGI(1,0),     NEGU(1,0),     NEGUI(1,0),  
-//  #3x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            SL(1,0),       SLI(1,0),      SLU(1,0),      SLUI(1,0),     SR(1,0),       SRI(1,0),      SRU(1,0),      SRUI(1,0),   
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            CMP(1,0,ThreeReg),     CMPI(1,0,ThreeReg),    CMPU(1,0,ThreeReg),    CMPUI(1,0,ThreeReg),   NEG(1,0,NegStyle),     NEGI(1,0,NegStyle),    NEGU(1,0,NegStyle),    NEGUI(1,0,NegStyle),
+//  #3x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            SL(1,0,ThreeReg),      SLI(1,0,ThreeReg),     SLU(1,0,ThreeReg),     SLUI(1,0,ThreeReg),    SR(1,0,ThreeReg),      SRI(1,0,ThreeReg),     SRU(1,0,ThreeReg),     SRUI(1,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            BN(1,0),       BNB(1,0),      BZ(1,0),       BZB(1,0),      BP(1,0),       BPB(1,0),      BOD(1,0),      BODB(1,0),   
-//  #4x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            BNN(1,0),      BNNB(1,0),     BNZ(1,0),      BNZB(1,0),     BNP(1,0),      BNPB(1,0),     BEV(1,0),      BEVB(1,0),   
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            BN(1,0,Branch),        BNB(1,0,Branch),       BZ(1,0,Branch),        BZB(1,0,Branch),       BP(1,0,Branch),        BPB(1,0,Branch),       BOD(1,0,Branch),       BODB(1,0,Branch),
+//  #4x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            BNN(1,0,Branch),       BNNB(1,0,Branch),      BNZ(1,0,Branch),       BNZB(1,0,Branch),     BNP(1,0,Branch),       BNPB(1,0,Branch),      BEV(1,0,Branch),       BEVB(1,0,Branch),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            PBN(3,0),      PBNB(3,0),     PBZ(3,0),      PBZB(3,0),     PBP(3,0),      PBPB(3,0),     PBOD(3,0),     PBODB(3,0),  
-//  #5x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            PBNN(3,0),     PBNNB(3,0),    PBNZ(3,0),     PBNZB(3,0),    PBNP(3,0),     PBNPB(3,0),    PBEV(3,0),     PBEVB(3,0),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            PBN(3,0,Branch),       PBNB(3,0,Branch),      PBZ(3,0,Branch),       PBZB(3,0,Branch),     PBP(3,0,Branch),       PBPB(3,0,Branch),      PBOD(3,0,Branch),      PBODB(3,0,Branch),
+//  #5x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            PBNN(3,0,Branch),      PBNNB(3,0,Branch),     PBNZ(3,0,Branch),      PBNZB(3,0,Branch),    PBNP(3,0,Branch),      PBNPB(3,0,Branch),     PBEV(3,0,Branch),      PBEVB(3,0,Branch),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            CSN(1,0),      CSNI(1,0),     CSZ(1,0),      CSZI(1,0),     CSP(1,0),      CSPI(1,0),     CSOD(1,0),     CSODI(1,0),  
-//  #6x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            CSNN(1,0),     CSNNI(1,0),    CSNZ(1,0),     CSNZI(1,0),    CSNP(1,0),     CSNPI(1,0),    CSEV(1,0),     CSEVI(1,0),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            CSN(1,0,ThreeReg),     CSNI(1,0,ThreeReg),    CSZ(1,0,ThreeReg),     CSZI(1,0,ThreeReg),   CSP(1,0,ThreeReg),     CSPI(1,0,ThreeReg),    CSOD(1,0,ThreeReg),    CSODI(1,0,ThreeReg),
+//  #6x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            CSNN(1,0,ThreeReg),    CSNNI(1,0,ThreeReg),   CSNZ(1,0,ThreeReg),    CSNZI(1,0,ThreeReg),  CSNP(1,0,ThreeReg),    CSNPI(1,0,ThreeReg),   CSEV(1,0,ThreeReg),    CSEVI(1,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            ZSN(1,0),      ZSNI(1,0),     ZSZ(1,0),      ZSZI(1,0),     ZSP(1,0),      ZSPI(1,0),     ZSOD(1,0),     ZSODI(1,0),  
-//  #7x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            ZSNN(1,0),     ZSNNI(1,0),    ZSNZ(1,0),     ZSNZI(1,0),    ZSNP(1,0),     ZSNPI(1,0),    ZSEV(1,0),     ZSEVI(1,0),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            ZSN(1,0,ThreeReg),     ZSNI(1,0,ThreeReg),    ZSZ(1,0,ThreeReg),     ZSZI(1,0,ThreeReg),   ZSP(1,0,ThreeReg),     ZSPI(1,0,ThreeReg),    ZSOD(1,0,ThreeReg),    ZSODI(1,0,ThreeReg),
+//  #7x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            ZSNN(1,0,ThreeReg),    ZSNNI(1,0,ThreeReg),   ZSNZ(1,0,ThreeReg),    ZSNZI(1,0,ThreeReg),  ZSNP(1,0,ThreeReg),    ZSNPI(1,0,ThreeReg),   ZSEV(1,0,ThreeReg),    ZSEVI(1,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            LDB(1,1),      LDBI(1,1),     LDBU(1,1),     LDBUI(1,1),    LDW(1,1),      LDWI(1,1),     LDWU(1,1),     LDWUI(1,1),  
-//  #8x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            LDT(1,1),      LDTI(1,1),     LDTU(1,1),     LDTUI(1,1),    LDO(1,1),      LDOI(1,1),     LDOU(1,1),     LDOUI(1,1),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            LDB(1,1,ThreeReg),     LDBI(1,1,ThreeReg),    LDBU(1,1,ThreeReg),    LDBUI(1,1,ThreeReg),  LDW(1,1,ThreeReg),     LDWI(1,1,ThreeReg),    LDWU(1,1,ThreeReg),    LDWUI(1,1,ThreeReg),
+//  #8x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            LDT(1,1,ThreeReg),     LDTI(1,1,ThreeReg),    LDTU(1,1,ThreeReg),    LDTUI(1,1,ThreeReg),  LDO(1,1,ThreeReg),     LDOI(1,1,ThreeReg),    LDOU(1,1,ThreeReg),    LDOUI(1,1,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            LDSF(1,1),     LDSFI(1,1),    LDHT(1,1),     LDHTI(1,1),    CSWAP(2,2),    CSWAPI(2,2),   LDUNC(1,1),    LDUNCI(1,1), 
-//  #9x     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            LDVTS(1,0),    LDVTSI(1,0),   PRELD(1,0),    PRELDI(1,0),   PREGO(1,0),    PREGOI(1,0),   GO(3,0),       GOI(3,0),    
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            LDSF(1,1,ThreeReg),    LDSFI(1,1,ThreeReg),   LDHT(1,1,ThreeReg),    LDHTI(1,1,ThreeReg),  CSWAP(2,2,ThreeReg),   CSWAPI(2,2,ThreeReg),  LDUNC(1,1,ThreeReg),   LDUNCI(1,1,ThreeReg),
+//  #9x     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            LDVTS(1,0,ThreeReg),   LDVTSI(1,0,ThreeReg),  PRELD(1,0,ThreeReg),   PRELDI(1,0,ThreeReg), PREGO(1,0,ThreeReg),   PREGOI(1,0,ThreeReg),  GO(3,0,ThreeReg),      GOI(3,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            STB(1,1),      STBI(1,1),     STBU(1,1),     STBUI(1,1),    STW(1,1),      STWI(1,1),     STWU(1,1),     STWUI(1,1),  
-//  #Ax     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            STT(1,1),      STTI(1,1),     STTU(1,1),     STTUI(1,1),    STO(1,1),      STOI(1,1),     STOU(1,1),     STOUI(1,1),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            STB(1,1,ThreeReg),     STBI(1,1,ThreeReg),    STBU(1,1,ThreeReg),    STBUI(1,1,ThreeReg),  STW(1,1,ThreeReg),     STWI(1,1,ThreeReg),    STWU(1,1,ThreeReg),    STWUI(1,1,ThreeReg),
+//  #Ax     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            STT(1,1,ThreeReg),     STTI(1,1,ThreeReg),    STTU(1,1,ThreeReg),    STTUI(1,1,ThreeReg),  STO(1,1,ThreeReg),     STOI(1,1,ThreeReg),    STOU(1,1,ThreeReg),    STOUI(1,1,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            STSF(1,1),     STSFI(1,1),    STHT(1,1),     STHTI(1,1),    STCO(1,1),     STCOI(1,1),    STUNC(1,1),    STUNCI(1,1), 
-//  #Bx     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            SYNCD(1,0),    SYNCDI(1,0),   PREST(1,0),    PRESTI(1,0),   SYNCID(1,0),   SYNCIDI(1,0),  PUSHGO(3,0),   PUSHGOI(3,0),
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            STSF(1,1,ThreeReg),    STSFI(1,1,ThreeReg),   STHT(1,1,ThreeReg),    STHTI(1,1,ThreeReg),  STCO(1,1,ThreeReg),    STCOI(1,1,ThreeReg),   STUNC(1,1,ThreeReg),   STUNCI(1,1,ThreeReg),
+//  #Bx     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            SYNCD(1,0,ThreeReg),   SYNCDI(1,0,ThreeReg),  PREST(1,0,ThreeReg),   PRESTI(1,0,ThreeReg), SYNCID(1,0,ThreeReg),  SYNCIDI(1,0,ThreeReg), PUSHGO(3,0,PushJ),     PUSHGOI(3,0,PushJ),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            OR(1,0),       ORI(1,0),      ORN(1,0),      ORNI(1,0),     NOR(1,0),      NORI(1,0),     XOR(1,0),      XORI(1,0),   
-//  #Cx     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            AND(1,0),      ANDI(1,0),     ANDN(1,0),     ANDNI(1,0),    NAND(1,0),     NANDI(1,0),    NXOR(1,0),     NXORI(1,0),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            OR(1,0,ThreeReg),      ORI(1,0,ThreeReg),     ORN(1,0,ThreeReg),     ORNI(1,0,ThreeReg),   NOR(1,0,ThreeReg),     NORI(1,0,ThreeReg),    XOR(1,0,ThreeReg),     XORI(1,0,ThreeReg),
+//  #Cx     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            AND(1,0,ThreeReg),     ANDI(1,0,ThreeReg),    ANDN(1,0,ThreeReg),    ANDNI(1,0,ThreeReg),  NAND(1,0,ThreeReg),    NANDI(1,0,ThreeReg),   NXOR(1,0,ThreeReg),    NXORI(1,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            BDIF(1,0),     BDIFI(1,0),    WDIF(1,0),     WDIFI(1,0),    TDIF(1,0),     TDIFI(1,0),    ODIF(1,0),     ODIFI(1,0),  
-//  #Dx     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            MUX(1,0),      MUXI(1,0),     SADD(1,0),     SADDI(1,0),    MOR(1,0),      MORI(1,0),     MXOR(1,0),     MXORI(1,0),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            BDIF(1,0,ThreeReg),    BDIFI(1,0,ThreeReg),   WDIF(1,0,ThreeReg),    WDIFI(1,0,ThreeReg),  TDIF(1,0,ThreeReg),    TDIFI(1,0,ThreeReg),   ODIF(1,0,ThreeReg),    ODIFI(1,0,ThreeReg),
+//  #Dx     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            MUX(1,0,ThreeReg),     MUXI(1,0,ThreeReg),    SADD(1,0,ThreeReg),    SADDI(1,0,ThreeReg),  MOR(1,0,ThreeReg),     MORI(1,0,ThreeReg),    MXOR(1,0,ThreeReg),    MXORI(1,0,ThreeReg),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            SETH(1,0),     SETMH(1,0),    SETML(1,0),    SETL(1,0),     INCH(1,0),     INCMH(1,0),    INCML(1,0),    INCL(1,0),   
-//  #Ex     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            ORH(1,0),      ORMH(1,0),     ORML(1,0),     ORL(1,0),      ANDNH(1,0),    ANDNMH(1,0),   ANDNML(1,0),   ANDNL(1,0),  
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            SETH(1,0,RegImm16),    SETMH(1,0,RegImm16),   SETML(1,0,RegImm16),   SETL(1,0,RegImm16),  INCH(1,0,RegImm16),    INCMH(1,0,RegImm16),   INCML(1,0,RegImm16),   INCL(1,0,RegImm16),
+//  #Ex     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            ORH(1,0,RegImm16),     ORMH(1,0,RegImm16),    ORML(1,0,RegImm16),    ORL(1,0,RegImm16),   ANDNH(1,0,RegImm16),   ANDNMH(1,0,RegImm16),  ANDNML(1,0,RegImm16),  ANDNL(1,0,RegImm16),
 
-//          #x0            #x1            #x2            #x3            #x4            #x5            #x6            #x7
-            JMP(1,0),      JMPB(1,0),     PUSHJ(1,0),    PUSHJB(1,0),   GETA(1,0),     GETAB(1,0),    PUT(1,0),      PUTI(1,0),   
-//  #Fx     #x8            #x9            #xA            #xB            #xC            #xD            #xE            #xF
-            POP(3,0),      RESUME(5,0),   SAVE(1,20),    UNSAVE(1,20),  SYNC(1,0),     SWYM(1,0),     GET(1,0),      TRIP(5,0),   
+//          #x0                    #x1                    #x2                    #x3                    #x4                    #x5                    #x6                    #x7
+            JMP(1,0,Jump),         JMPB(1,0,Jump),        PUSHJ(1,0,PushJ),      PUSHJB(1,0,PushJ),   GETA(1,0,Branch),      GETAB(1,0,Branch),     PUT(1,0,Put),          PUTI(1,0,Put),
+//  #Fx     #x8                    #x9                    #xA                    #xB                    #xC                    #xD                    #xE                    #xF
+            POP(3,0,Pop),          RESUME(5,0,Special),   SAVE(1,20,Special),    UNSAVE(1,20,Special), SYNC(1,0,Special),     SWYM(1,0,Special),     GET(1,0,Get),          TRIP(5,0,Trap),
 }
 
 #[cfg(test)]

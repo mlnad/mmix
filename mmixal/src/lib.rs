@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 mod assembler;
+mod encode;
+mod parse;
 pub mod binary;
 
 pub use assembler::assemble;

@@ -181,11 +181,12 @@ pub fn define_special_registers(tokens: TokenStream) -> TokenStream {
 
 // ── define_opcodes! ──────────────────────────────────────────────────────
 
-/// A single opcode entry: `NAME(v, mu)`
+/// A single opcode entry: `NAME(v, mu, Format)`
 struct OpcodeDef {
     name: Ident,
     v: LitInt,
     mu: LitInt,
+    format: Ident,
 }
 
 impl Parse for OpcodeDef {
@@ -196,15 +197,18 @@ impl Parse for OpcodeDef {
         let v: LitInt = content.parse()?;
         content.parse::<Token![,]>()?;
         let mu: LitInt = content.parse()?;
-        Ok(Self { name, v, mu })
+        content.parse::<Token![,]>()?;
+        let format: Ident = content.parse()?;
+        Ok(Self { name, v, mu, format })
     }
 }
 
-/// Output configuration block: `output { timing: IDENT, names: IDENT, ops: IDENT, }`
+/// Output configuration block: `output { timing: IDENT, names: IDENT, ops: IDENT, formats: IDENT, }`
 struct OutputConfig {
     timing_name: Ident,
     name_table_name: Ident,
     op_mod_name: Ident,
+    format_table_name: Ident,
 }
 
 impl Parse for OutputConfig {
@@ -215,6 +219,7 @@ impl Parse for OutputConfig {
         let mut timing_name: Option<Ident> = None;
         let mut name_table_name: Option<Ident> = None;
         let mut op_mod_name: Option<Ident> = None;
+        let mut format_table_name: Option<Ident> = None;
 
         while !content.is_empty() {
             let key: Ident = content.parse()?;
@@ -226,15 +231,17 @@ impl Parse for OutputConfig {
                 "timing" => timing_name = Some(value),
                 "names" => name_table_name = Some(value),
                 "ops" => op_mod_name = Some(value),
-                _ => return Err(syn::Error::new(key.span(), format!("unknown output key `{key}`, expected `timing`, `names`, or `ops`"))),
+                "formats" => format_table_name = Some(value),
+                _ => return Err(syn::Error::new(key.span(), format!("unknown output key `{key}`, expected `timing`, `names`, `ops`, or `formats`"))),
             }
         }
 
         let timing_name = timing_name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `timing` in output block"))?;
         let name_table_name = name_table_name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `names` in output block"))?;
         let op_mod_name = op_mod_name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `ops` in output block"))?;
+        let format_table_name = format_table_name.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `formats` in output block"))?;
 
-        Ok(Self { timing_name, name_table_name, op_mod_name })
+        Ok(Self { timing_name, name_table_name, op_mod_name, format_table_name })
     }
 }
 
@@ -301,6 +308,7 @@ pub fn define_opcodes(tokens: TokenStream) -> TokenStream {
     let tn = &input.output.timing_name;
     let nn = &input.output.name_table_name;
     let om = &input.output.op_mod_name;
+    let fn_ = &input.output.format_table_name;
 
     // Build timing array entries
     let timing_entries = entries.iter().map(|e| {
@@ -314,6 +322,12 @@ pub fn define_opcodes(tokens: TokenStream) -> TokenStream {
         let raw = e.name.to_string();
         let display = raw.strip_prefix('_').unwrap_or(&raw);
         quote! { #display }
+    });
+
+    // Build format table entries
+    let format_entries = entries.iter().map(|e| {
+        let fmt = &e.format;
+        quote! { OperandFormat::#fmt }
     });
 
     // Build op constants — each entry gets `pub const NAME: u8 = index;`
@@ -330,6 +344,10 @@ pub fn define_opcodes(tokens: TokenStream) -> TokenStream {
 
         pub static #nn: [&str; 256] = [
             #( #name_entries ),*
+        ];
+
+        pub static #fn_: [OperandFormat; 256] = [
+            #( #format_entries ),*
         ];
 
         pub mod #om {
