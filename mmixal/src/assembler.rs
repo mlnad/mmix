@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use mmix_core::{op, NAME_TABLE, SpecialRegister};
 use crate::{AssembleResult, AssembleError};
 
@@ -21,6 +21,8 @@ enum OperandKind {
     Jump,
     /// $X, $Y, $Z or $X, $Y, Z  -- NEG style (Y is inline constant)
     NegStyle,
+    /// SET $X,$Y (-> ORI $X,$Y,0) or SET $X,imm16 (-> SETL $X,imm16)
+    Set,
 }
 
 fn build_opcode_table() -> HashMap<&'static str, (u8, OperandKind)> {
@@ -69,7 +71,26 @@ fn build_opcode_table() -> HashMap<&'static str, (u8, OperandKind)> {
     m.insert(NAME_TABLE[op::GET as usize], (op::GET, Get));
     m.insert(NAME_TABLE[op::PUT as usize], (op::PUT, Put));
 
+    // Aliases
+    m.insert("SET", (op::ORI, Set));   // SET $X,$Y -> ORI $X,$Y,0; SET $X,imm -> SETL $X,imm
+    m.insert("LDA", (op::ADDU, ThreeReg)); // LDA $X,$Y,$Z -> ADDU $X,$Y,$Z
+
     m
+}
+
+/// Build a set of all known mnemonics (machine instructions + aliases + pseudo-ops)
+/// for O(1) lookup in extract_label.
+fn build_mnemonic_set(optable: &HashMap<&str, (u8, OperandKind)>) -> HashSet<String> {
+    let mut s: HashSet<String> = optable.keys().map(|k| k.to_string()).collect();
+    // Also include all NAME_TABLE entries (covers immediate variants like ADDI etc.)
+    for &name in &NAME_TABLE {
+        s.insert(name.to_string());
+    }
+    // Pseudo-ops that are not machine instructions
+    for &pseudo in &["BYTE", "WYDE", "TETRA", "OCTA", "IS"] {
+        s.insert(pseudo.to_string());
+    }
+    s
 }
 
 /// Parse a register operand like "$0" or "$255", returns register number
@@ -113,6 +134,20 @@ fn parse_reg_or_imm(s: &str) -> Result<(u8, bool), String> {
     }
 }
 
+/// Like parse_reg_or_imm but also resolves labels/symbols.
+fn parse_reg_or_imm_with_labels(s: &str, labels: &HashMap<String, u64>, cur_offset: u64) -> Result<(u8, bool), String> {
+    let s = s.trim();
+    if s.starts_with('$') {
+        Ok((parse_reg(s)?, false))
+    } else {
+        let v = resolve_label_or_number(s, labels, cur_offset)?;
+        if v > 255 {
+            return Err(format!("immediate {} out of range 0..255", v));
+        }
+        Ok((v as u8, true))
+    }
+}
+
 /// Special register name -> encoding
 fn parse_special_reg(s: &str) -> Result<u8, String> {
     let s = s.trim().to_lowercase();
@@ -134,6 +169,7 @@ fn strip_comment(line: &str) -> &str {
 
 pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
     let optable = build_opcode_table();
+    let mnemonics = build_mnemonic_set(&optable);
     let lines: Vec<&str> = source.lines().collect();
 
     // --- Pass 1: collect labels and compute offsets ---
@@ -147,7 +183,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
         }
 
         // Check for label: "Name  INSTR ..." or "Name:"
-        let (label, rest) = extract_label(line);
+        let (label, rest) = extract_label(line, &mnemonics);
 
         if let Some(lbl) = label {
             if labels.contains_key(lbl) {
@@ -156,15 +192,38 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
                     message: format!("duplicate label '{}'", lbl),
                 });
             }
-            labels.insert(lbl.to_string(), offset);
         }
 
         let rest = rest.trim();
         if rest.is_empty() {
+            if let Some(lbl) = label {
+                labels.insert(lbl.to_string(), offset);
+            }
             continue;
         }
 
         let mnem = rest.split_whitespace().next().unwrap().to_uppercase();
+
+        // IS pseudo-instruction: defines a symbolic constant (no bytes emitted)
+        if mnem == "IS" {
+            if let Some(lbl) = label {
+                let args_str = rest[mnem.len()..].trim();
+                let val = resolve_label_or_number(args_str, &labels, offset)
+                    .map_err(|e| AssembleError { line: line_idx, message: e })?;
+                labels.insert(lbl.to_string(), val);
+            } else {
+                return Err(AssembleError {
+                    line: line_idx,
+                    message: "IS requires a label".into(),
+                });
+            }
+            continue;
+        }
+
+        // For non-IS lines, register label at current offset
+        if let Some(lbl) = label {
+            labels.insert(lbl.to_string(), offset);
+        }
 
         // Data pseudo-instructions
         match mnem.as_str() {
@@ -203,7 +262,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
             continue;
         }
 
-        let (_label, rest) = extract_label(line);
+        let (_label, rest) = extract_label(line, &mnemonics);
         let rest = rest.trim();
         if rest.is_empty() {
             continue;
@@ -212,6 +271,11 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
         let mnem_end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
         let mnem = rest[..mnem_end].to_uppercase();
         let args_str = rest[mnem_end..].trim();
+
+        // Skip IS in pass 2 (already handled in pass 1)
+        if mnem == "IS" {
+            continue;
+        }
 
         match mnem.as_str() {
             "BYTE" => {
@@ -277,7 +341,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
     })
 }
 
-fn extract_label(line: &str) -> (Option<&str>, &str) {
+fn extract_label<'a>(line: &'a str, mnemonics: &HashSet<String>) -> (Option<&'a str>, &'a str) {
     let line_trimmed = line.trim_end();
 
     // If line starts with whitespace, no label
@@ -288,12 +352,9 @@ fn extract_label(line: &str) -> (Option<&str>, &str) {
     let first_word_end = line_trimmed.find(|c: char| c.is_whitespace()).unwrap_or(line_trimmed.len());
     let first_word = &line_trimmed[..first_word_end];
 
-    // Check if it's a known mnemonic or data directive (no label)
+    // Check if it's a known mnemonic, alias, or pseudo-op (no label)
     let upper = first_word.trim_end_matches(':').to_uppercase();
-    let is_data_directive = matches!(upper.as_str(), "BYTE" | "WYDE" | "TETRA" | "OCTA");
-    let is_instruction = NAME_TABLE.iter().any(|&n| n.eq_ignore_ascii_case(&upper));
-
-    if is_data_directive || is_instruction {
+    if mnemonics.contains(&upper) {
         return (None, line_trimmed);
     }
 
@@ -404,7 +465,7 @@ fn encode_instruction(
             }
             let x = parse_reg(args[0]).map_err(|e| err(e))?;
             let y = parse_reg(args[1]).map_err(|e| err(e))?;
-            let (z, is_imm) = parse_reg_or_imm(args[2]).map_err(|e| err(e))?;
+            let (z, is_imm) = parse_reg_or_imm_with_labels(args[2], labels, cur_offset).map_err(|e| err(e))?;
             let op = if is_imm { base_op + 1 } else { base_op };
             Ok(((op as u32) << 24) | ((x as u32) << 16) | ((y as u32) << 8) | (z as u32))
         }
@@ -413,8 +474,8 @@ fn encode_instruction(
                 return Err(err(format!("expected 3 operands, got {}", args.len())));
             }
             let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let y_val = parse_number(args[1].trim()).map_err(|e| err(e))? as u8;
-            let (z, is_imm) = parse_reg_or_imm(args[2]).map_err(|e| err(e))?;
+            let y_val = resolve_label_or_number(args[1].trim(), labels, cur_offset).map_err(|e| err(e))? as u8;
+            let (z, is_imm) = parse_reg_or_imm_with_labels(args[2], labels, cur_offset).map_err(|e| err(e))?;
             let op = if is_imm { base_op + 1 } else { base_op };
             Ok(((op as u32) << 24) | ((x as u32) << 16) | ((y_val as u32) << 8) | (z as u32))
         }
@@ -423,7 +484,7 @@ fn encode_instruction(
                 return Err(err(format!("expected 2 operands, got {}", args.len())));
             }
             let x = parse_reg(args[0]).map_err(|e| err(e))?;
-            let yz = parse_number(args[1].trim()).map_err(|e| err(e))? as u16;
+            let yz = resolve_label_or_number(args[1].trim(), labels, cur_offset).map_err(|e| err(e))? as u16;
             Ok(((base_op as u32) << 24) | ((x as u32) << 16) | (yz as u32))
         }
         OperandKind::Branch => {
@@ -483,6 +544,25 @@ fn encode_instruction(
             let (z, is_imm) = parse_reg_or_imm(args[1]).map_err(|e| err(e))?;
             let op = if is_imm { base_op + 1 } else { base_op };
             Ok(((op as u32) << 24) | ((sr as u32) << 16) | (z as u32))
+        }
+        OperandKind::Set => {
+            // SET $X,$Y  -> ORI $X,$Y,0
+            // SET $X,imm -> SETL $X,imm
+            if args.len() != 2 {
+                return Err(err(format!("expected 2 operands, got {}", args.len())));
+            }
+            let x = parse_reg(args[0]).map_err(|e| err(e))?;
+            let second = args[1].trim();
+            if second.starts_with('$') {
+                let y = parse_reg(second).map_err(|e| err(e))?;
+                // ORI $X,$Y,0
+                Ok(((op::ORI as u32) << 24) | ((x as u32) << 16) | ((y as u32) << 8))
+            } else {
+                let val = resolve_label_or_number(second, labels, cur_offset).map_err(|e| err(e))?;
+                let yz = val as u16;
+                // SETL $X,yz
+                Ok(((op::SETL as u32) << 24) | ((x as u32) << 16) | (yz as u32))
+            }
         }
     }
 }

@@ -373,7 +373,7 @@ fn assemble_wrong_operand_count() {
 #[test]
 fn assemble_invalid_register() {
     let e = assemble("        ADD $1,$2,bad").unwrap_err();
-    assert!(e.message.contains("invalid"));
+    assert!(e.message.contains("undefined label"));
 }
 
 #[test]
@@ -424,4 +424,134 @@ fn assemble_case_insensitive_mnemonic() {
     let r1 = assemble("        setl $1,1").unwrap();
     let r2 = assemble("        SETL $1,1").unwrap();
     assert_eq!(r1.bytes, r2.bytes);
+}
+
+// ─── Aliases ───
+
+#[test]
+fn assemble_set_register() {
+    // SET $1,$2  -> ORI $1,$2,0
+    let r = assemble("        SET $1,$2").unwrap();
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::ORI as u32) << 24) | (1 << 16) | (2 << 8));
+}
+
+#[test]
+fn assemble_set_immediate() {
+    // SET $1,1000  -> SETL $1,1000
+    let r = assemble("        SET $1,1000").unwrap();
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::SETL as u32) << 24) | (1 << 16) | 1000);
+}
+
+#[test]
+fn assemble_set_case_insensitive() {
+    let r = assemble("        set $3,$4").unwrap();
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::ORI as u32) << 24) | (3 << 16) | (4 << 8));
+}
+
+#[test]
+fn assemble_lda() {
+    // LDA $1,$2,$3  -> ADDU $1,$2,$3
+    let r = assemble("        LDA $1,$2,$3").unwrap();
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::ADDU as u32) << 24) | (1 << 16) | (2 << 8) | 3);
+}
+
+#[test]
+fn assemble_lda_immediate() {
+    // LDA $1,$2,8  -> ADDUI $1,$2,8
+    let r = assemble("        LDA $1,$2,8").unwrap();
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::ADDUI as u32) << 24) | (1 << 16) | (2 << 8) | 8);
+}
+
+// ─── IS pseudo-instruction ───
+
+#[test]
+fn assemble_is_constant() {
+    // N IS 10 defines N=10, then SETL $1,N should use N as label resolving to 10
+    // But IS defines a symbol whose value is 10, used as an immediate
+    let src = "\
+N       IS      10\n\
+        SETL    $1,N";
+    let r = assemble(src).unwrap();
+    // IS produces no bytes, so only 4 bytes for SETL
+    assert_eq!(r.bytes.len(), 4);
+    // N=10 used as 16-bit immediate in SETL
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::SETL as u32) << 24) | (1 << 16) | 10);
+}
+
+#[test]
+fn assemble_is_no_bytes() {
+    let src = "\
+X       IS      42\n\
+        TRAP    0,0,0";
+    let r = assemble(src).unwrap();
+    // IS produces no bytes
+    assert_eq!(r.bytes.len(), 4);
+}
+
+#[test]
+fn assemble_is_requires_label() {
+    let e = assemble("        IS 10").unwrap_err();
+    assert!(e.message.contains("IS requires a label"));
+}
+
+#[test]
+fn assemble_is_hex_value() {
+    let src = "\
+MASK    IS      0xFF\n\
+        AND     $1,$2,MASK";
+    let r = assemble(src).unwrap();
+    assert_eq!(r.bytes.len(), 4);
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    // MASK=255, used as immediate -> ANDI
+    assert_eq!(word, ((op::ANDI as u32) << 24) | (1 << 16) | (2 << 8) | 0xFF);
+}
+
+#[test]
+fn assemble_is_used_in_set() {
+    // IS + SET alias together
+    let src = "\
+VAL     IS      42\n\
+        SET     $1,VAL";
+    let r = assemble(src).unwrap();
+    assert_eq!(r.bytes.len(), 4);
+    let word = u32::from_be_bytes(r.bytes[..4].try_into().unwrap());
+    assert_eq!(word, ((op::SETL as u32) << 24) | (1 << 16) | 42);
+}
+
+// ─── Full program with aliases (fibonacci.mms) ───
+
+#[test]
+fn assemble_fibonacci_program() {
+    let src = "\
+N       IS      10\n\
+\n\
+        SETL    $0,0\n\
+        SETL    $1,1\n\
+        SETL    $2,N\n\
+        SUB     $2,$2,2\n\
+\n\
+Loop    ADD     $3,$0,$1\n\
+        SET     $0,$1\n\
+        SET     $1,$3\n\
+        SUB     $2,$2,1\n\
+        BNZ     $2,Loop\n\
+\n\
+        TRAP    0,0,0";
+    let r = assemble(src).unwrap();
+    // IS produces no bytes; 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 = 40 bytes (10 instructions)
+    assert_eq!(r.bytes.len(), 40);
+
+    // SET $0,$1 -> ORI $0,$1,0
+    let w_set0 = u32::from_be_bytes(r.bytes[20..24].try_into().unwrap());
+    assert_eq!(w_set0 >> 24, op::ORI as u32);
+
+    // SET $1,$3 -> ORI $1,$3,0
+    let w_set1 = u32::from_be_bytes(r.bytes[24..28].try_into().unwrap());
+    assert_eq!(w_set1, ((op::ORI as u32) << 24) | (1 << 16) | (3 << 8));
 }
