@@ -90,8 +90,10 @@ fn draw_code_panel(f: &mut Frame, app: &App, area: Rect) {
 
     let title = if app.halted {
         " Code [HALTED] "
-    } else if app.running {
+    } else if app.running && !app.step_mode {
         " Code [RUNNING] "
+    } else if app.running && app.step_mode {
+        " Code [STEPPING] "
     } else {
         " Code "
     };

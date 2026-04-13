@@ -614,8 +614,17 @@ impl Machine {
     }
 
     pub fn run(&mut self) -> Result<(), String> {
+        self.run_until(|_| false)
+    }
+
+    /// Execute instructions until halted or `should_stop` returns true.
+    /// The callback is invoked after each step with a reference to the machine.
+    pub fn run_until(&mut self, mut should_stop: impl FnMut(&Self) -> bool) -> Result<(), String> {
         while !self.halted {
             self.step()?;
+            if should_stop(self) {
+                break;
+            }
         }
         Ok(())
     }
@@ -1953,5 +1962,33 @@ mod tests {
         m.set_entry(0);
         m.step().unwrap();
         assert_eq!(m.general.get(0), 42); // even
+    }
+
+    // ==== run_until ====
+
+    #[test]
+    fn run_until_stop_condition() {
+        // Program: $10 = 5, then subtract 1 repeatedly until halt
+        // We use run_until to stop when $10 == 2
+        let mut m = exec_program(0, &[
+            (op::SETL, 10, 0x00, 0x05),    // addr 0: $10 = 5
+            (op::SUBI, 10, 10, 1),          // addr 4: $10 -= 1
+            (op::BNZB, 10, 0xFF, 0xFF),    // addr 8: BNZ backward to addr 4 (encoded offset 0xFFFF = -1 instruction)
+            (op::TRAP, 0, 0, 0),            // addr 12: halt
+        ]);
+        m.run_until(|m| m.general.get(10) == 2).unwrap();
+        assert_eq!(m.general.get(10), 2);
+        assert!(!m.halted);
+    }
+
+    #[test]
+    fn run_until_no_stop_runs_to_halt() {
+        let mut m = exec_program(0, &[
+            (op::SETL, 1, 0x00, 0x07),
+            (op::TRAP, 0, 0, 0),
+        ]);
+        m.run_until(|_| false).unwrap();
+        assert!(m.halted);
+        assert_eq!(m.general.get(1), 7);
     }
 }

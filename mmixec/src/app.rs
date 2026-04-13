@@ -15,6 +15,7 @@ pub struct App {
     pub breakpoints: HashSet<usize>,
     pub output: String,
     pub running: bool,
+    pub step_mode: bool,
     pub halted: bool,
     pub status_msg: String,
     pub input_mode: InputMode,
@@ -37,6 +38,7 @@ impl App {
             breakpoints: HashSet::new(),
             output: String::new(),
             running: false,
+            step_mode: false,
             halted: false,
             status_msg: String::from("Ready. n=step r=run b=breakpoint q=quit"),
             input_mode: InputMode::Normal,
@@ -65,6 +67,7 @@ impl App {
                 if self.machine.halted {
                     self.halted = true;
                     self.running = false;
+                    self.step_mode = false;
                     self.status_msg = "Program halted".into();
                 } else {
                     let pc = self.machine.pc;
@@ -79,6 +82,7 @@ impl App {
             Err(e) => {
                 self.halted = true;
                 self.running = false;
+                self.step_mode = false;
                 self.error_msg = Some(e.clone());
                 self.status_msg = format!("Error: {}", e);
             }
@@ -90,6 +94,65 @@ impl App {
         self.addr_to_line.get(&pc).copied()
     }
 
+    /// Run continuously, stopping at breakpoints or halt.
+    /// Uses `Machine::run_until()` to delegate execution to the machine layer.
+    pub fn run_continuous(&mut self) {
+        if self.halted {
+            self.status_msg = "Program halted".into();
+            return;
+        }
+
+        let breakpoints = &self.breakpoints;
+        let addr_to_line = &self.addr_to_line;
+        let mut hit_breakpoint = false;
+
+        let result = if breakpoints.is_empty() {
+            self.machine.run_until(|_| false)
+        } else {
+            self.machine.run_until(|m| {
+                if let Some(&line) = addr_to_line.get(&m.pc) {
+                    if breakpoints.contains(&line) {
+                        hit_breakpoint = true;
+                        return true;
+                    }
+                }
+                false
+            })
+        };
+
+        // Collect output
+        if !self.machine.output_buffer.is_empty() {
+            let text = String::from_utf8_lossy(&self.machine.output_buffer).to_string();
+            self.output.push_str(&text);
+            self.machine.output_buffer.clear();
+        }
+
+        match result {
+            Ok(()) => {
+                if self.machine.halted {
+                    self.halted = true;
+                    self.running = false;
+                    self.step_mode = false;
+                    self.status_msg = "Program halted".into();
+                } else if hit_breakpoint {
+                    self.step_mode = true;
+                    self.status_msg = format!(
+                        "Breakpoint hit at line {} (step mode: n=step r=run q=quit)",
+                        self.current_line().map(|l| l + 1).unwrap_or(0)
+                    );
+                }
+                self.error_msg = None;
+            }
+            Err(e) => {
+                self.halted = true;
+                self.running = false;
+                self.step_mode = false;
+                self.error_msg = Some(e.clone());
+                self.status_msg = format!("Error: {}", e);
+            }
+        }
+    }
+
     pub fn toggle_breakpoint(&mut self, line: usize) {
         if self.breakpoints.contains(&line) {
             self.breakpoints.remove(&line);
@@ -97,14 +160,6 @@ impl App {
         } else {
             self.breakpoints.insert(line);
             self.status_msg = format!("Breakpoint set at line {}", line + 1);
-        }
-    }
-
-    pub fn is_at_breakpoint(&self) -> bool {
-        if let Some(line) = self.current_line() {
-            self.breakpoints.contains(&line)
-        } else {
-            false
         }
     }
 
@@ -147,6 +202,7 @@ mod tests {
         let app = make_app("        TRAP 0,0,0");
         assert!(!app.halted);
         assert!(!app.running);
+        assert!(!app.step_mode);
         assert_eq!(app.output, "");
         assert_eq!(app.breakpoints.len(), 0);
         assert_eq!(app.input_mode, InputMode::Normal);
@@ -209,16 +265,6 @@ mod tests {
     }
 
     #[test]
-    fn is_at_breakpoint() {
-        let src = "        SETL $1,1\n        TRAP 0,0,0";
-        let mut app = make_app(src);
-        app.toggle_breakpoint(0);
-        assert!(app.is_at_breakpoint()); // PC at line 0
-        app.step();
-        assert!(!app.is_at_breakpoint()); // PC at line 1, no breakpoint
-    }
-
-    #[test]
     fn source_lines() {
         let src = "        SETL $1,1\n        TRAP 0,0,0";
         let app = make_app(src);
@@ -270,5 +316,41 @@ String  BYTE    \"Hi\",0";
             self.machine.pc - if self.halted { 4 } else { 0 }
             // just checks initial state is 0
         }
+    }
+
+    #[test]
+    fn step_halts_resets_running_and_step_mode() {
+        let mut app = make_app("        TRAP 0,0,0");
+        app.running = true;
+        app.step_mode = true;
+        app.step();
+        assert!(app.halted);
+        assert!(!app.running);
+        assert!(!app.step_mode);
+    }
+
+    #[test]
+    fn run_continuous_to_halt() {
+        let src = "        SETL $1,42\n        TRAP 0,0,0";
+        let mut app = make_app(src);
+        app.running = true;
+        app.run_continuous();
+        assert!(app.halted);
+        assert!(!app.running);
+        assert!(!app.step_mode);
+        assert_eq!(app.machine.general.get(1), 42);
+    }
+
+    #[test]
+    fn run_continuous_stops_at_breakpoint() {
+        let src = "        SETL $1,1\n        SETL $2,2\n        TRAP 0,0,0";
+        let mut app = make_app(src);
+        app.running = true;
+        app.toggle_breakpoint(1); // breakpoint at line 1 (SETL $2,2)
+        app.run_continuous();
+        assert!(!app.halted);
+        assert!(app.running); // still running
+        assert!(app.step_mode); // switched to step mode
+        assert_eq!(app.current_line(), Some(1)); // stopped at breakpoint line
     }
 }

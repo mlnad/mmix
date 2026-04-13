@@ -81,37 +81,26 @@ fn run_event_loop(
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
-        if app.running && !app.halted {
-            // In running mode: execute steps rapidly, but poll for key interrupts
+        // Continuous execution mode: running && !step_mode && !halted
+        if app.running && !app.step_mode && !app.halted {
+            // Poll for key interrupts
             if event::poll(Duration::from_millis(10))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
-                        // Any key press stops running
-                        app.running = false;
-                        app.status_msg = "Stopped".into();
+                        // Any key press switches to step mode
+                        app.step_mode = true;
+                        app.status_msg = "Step mode: n=step r=run b=breakpoint q=quit".into();
                         continue;
                     }
                 }
             }
-            // Execute a batch of steps
-            for _ in 0..100 {
-                if app.halted || !app.running {
-                    break;
-                }
-                app.step();
-                if app.is_at_breakpoint() {
-                    app.running = false;
-                    app.status_msg = format!(
-                        "Breakpoint hit at line {}",
-                        app.current_line().map(|l| l + 1).unwrap_or(0)
-                    );
-                    break;
-                }
-            }
+            // Delegate batch execution to Machine::run_until via App::run_continuous
+            app.run_continuous();
             continue;
         }
 
-        // Normal mode: wait for input
+        // Step mode: running && step_mode && !halted
+        // OR normal mode: !running / halted — both wait for input
         if let Event::Key(key) = event::read()? {
             if key.kind != KeyEventKind::Press {
                 continue;
@@ -148,12 +137,17 @@ fn run_event_loop(
                 InputMode::Normal => match key.code {
                     KeyCode::Char('q') => return Ok(()),
                     KeyCode::Char('n') => {
-                        app.step();
+                        if !app.halted {
+                            app.running = true;
+                            app.step_mode = true;
+                            app.step();
+                        }
                     }
                     KeyCode::Char('r') => {
                         if !app.halted {
                             app.running = true;
-                            app.status_msg = "Running... (press any key to stop)".into();
+                            app.step_mode = false;
+                            app.status_msg = "Running... (press any key to step)".into();
                         }
                     }
                     KeyCode::Char('b') => {
