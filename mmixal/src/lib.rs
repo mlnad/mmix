@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 mod assembler;
+pub(crate) mod directive;
 mod encode;
 mod parse;
 pub mod binary;

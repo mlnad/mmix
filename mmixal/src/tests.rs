@@ -555,3 +555,88 @@ Loop    ADD     $3,$0,$1\n\
     let w_set1 = u32::from_be_bytes(r.bytes[24..28].try_into().unwrap());
     assert_eq!(w_set1, ((op::ORI as u32) << 24) | (1 << 16) | (3 << 8));
 }
+
+// ─── LOC pseudo-instruction ───
+
+#[test]
+fn loc_sets_entry_addr() {
+    // LOC changes entry_addr to the given address.
+    let src = "        LOC #100\n        TRAP 0,0,0";
+    let r = assemble(src).unwrap();
+    assert_eq!(r.entry_addr, 0x100);
+    // Only the TRAP instruction is emitted (4 bytes); LOC emits nothing.
+    assert_eq!(r.bytes.len(), 4);
+}
+
+#[test]
+fn loc_line_to_offset_is_absolute() {
+    // After LOC #100 the debug maps must store absolute addresses.
+    let src = "        LOC #100\n        SETL $1,1\n        TRAP 0,0,0";
+    let r = assemble(src).unwrap();
+    // LOC itself emits no bytes and has no entry in line_to_offset.
+    assert!(!r.line_to_offset.contains_key(&0));
+    // SETL is at absolute address 0x100.
+    assert_eq!(r.line_to_offset[&1], 0x100);
+    // TRAP is at 0x104.
+    assert_eq!(r.line_to_offset[&2], 0x104);
+    // Reverse map.
+    assert_eq!(r.offset_to_line[&0x100], 1);
+    assert_eq!(r.offset_to_line[&0x104], 2);
+}
+
+#[test]
+fn loc_label_resolution_absolute() {
+    // A label defined after LOC must carry the absolute address.
+    let src = "        LOC #200\nFoo     SETL $1,1\n        TRAP 0,0,0";
+    let r = assemble(src).unwrap();
+    assert_eq!(r.entry_addr, 0x200);
+    // bytes[0..4] = SETL, bytes[4..8] = TRAP — no zero prefix.
+    assert_eq!(r.bytes.len(), 8);
+    let w0 = u32::from_be_bytes(r.bytes[0..4].try_into().unwrap());
+    assert_eq!(w0 >> 24, op::SETL as u32);
+}
+
+#[test]
+fn loc_branch_within_relocated_code() {
+    // Branch offsets are relative; they must remain correct after relocation.
+    //
+    // Program layout at 0x100:
+    //   0x100  BZ  $0,End   (forward 2 instructions → yz=2)
+    //   0x104  SETL $1,1
+    //   0x108  TRAP 0,0,0   <- End
+    let src = "        LOC #100\n        BZ $0,End\n        SETL $1,1\nEnd     TRAP 0,0,0";
+    let r = assemble(src).unwrap();
+    assert_eq!(r.entry_addr, 0x100);
+    let bz_word = u32::from_be_bytes(r.bytes[0..4].try_into().unwrap());
+    // BZ forward by 2 instructions: op=BZ, $0, yz=2
+    assert_eq!(bz_word, ((op::BZ as u32) << 24) | (0 << 16) | 2);
+}
+
+#[test]
+fn loc_multiple_forward_gap_zero_padded() {
+    // A second LOC that advances past already-emitted bytes inserts zero bytes.
+    //
+    //   0x100  TRAP 0,0,0   (4 bytes)
+    //   0x104..0x110        (12 zero bytes gap)
+    //   0x110  SETL $1,1   (4 bytes)
+    let src = "        LOC #100\n        TRAP 0,0,0\n        LOC #110\n        SETL $1,1";
+    let r = assemble(src).unwrap();
+    assert_eq!(r.entry_addr, 0x100);
+    assert_eq!(r.bytes.len(), 20); // 4 + 12 + 4
+    assert_eq!(&r.bytes[4..16], &[0u8; 12]);
+    // SETL starts at bytes[16].
+    let setl_word = u32::from_be_bytes(r.bytes[16..20].try_into().unwrap());
+    assert_eq!(setl_word >> 24, op::SETL as u32);
+    // Debug map for SETL must use absolute address 0x110.
+    assert_eq!(r.line_to_offset[&3], 0x110);
+}
+
+#[test]
+fn loc_backward_returns_error() {
+    // A LOC whose target is behind the current position is a hard error.
+    let src = "        LOC #100\n        TRAP 0,0,0\n        LOC #50";
+    let result = assemble(src);
+    assert!(result.is_err());
+    let msg = result.unwrap_err().message;
+    assert!(msg.contains("before current position"), "unexpected error: {}", msg);
+}

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use mmix_core::{op, NAME_TABLE, FORMAT_TABLE, OperandFormat};
+use crate::directive::DirectiveTable;
 use crate::parse::*;
 
 #[derive(Debug, Clone, Copy)]
@@ -74,8 +75,8 @@ pub(crate) fn build_mnemonic_set(optable: &HashMap<&str, InstrEntry>) -> std::co
     for &name in &NAME_TABLE {
         s.insert(name.to_string());
     }
-    for &pseudo in &["BYTE", "WYDE", "TETRA", "OCTA", "IS"] {
-        s.insert(pseudo.to_string());
+    for name in DirectiveTable::new().names() {
+        s.insert(name.to_string());
     }
     s
 }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use crate::directive::{Directive, DirectiveTable};
 use crate::encode::*;
 use crate::parse::*;
 use crate::{AssembleResult, AssembleError};
@@ -31,11 +32,18 @@ fn strip_comment(line: &str) -> &str {
 pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
     let optable = build_opcode_table();
     let mnemonics = build_mnemonic_set(&optable);
+    let directives = DirectiveTable::new();
     let lines: Vec<&str> = source.lines().collect();
 
-    // --- Pass 1: collect labels and compute offsets ---
+    // --- Pass 1: collect labels and advance the location counter (lc) ---
+    //
+    // `lc` is always an *absolute* memory address.  When no LOC directive has
+    // been seen yet it starts at 0 (matching previous behaviour).
+    // `entry_addr` records the address of the first LOC, which is where the
+    // loader will map the first byte of `bytes`.
     let mut labels: HashMap<String, u64> = HashMap::new();
-    let mut offset: u64 = 0;
+    let mut lc: u64 = 0;
+    let mut entry_addr: Option<u64> = None;
 
     for (line_idx, &raw_line) in lines.iter().enumerate() {
         let line = strip_comment(raw_line);
@@ -43,9 +51,9 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
             continue;
         }
 
-        // Check for label: "Name  INSTR ..." or "Name:"
         let (label, rest) = extract_label(line, &mnemonics);
 
+        // Duplicate-label check applies to every line before anything else.
         if let Some(lbl) = label {
             if labels.contains_key(lbl) {
                 return Err(AssembleError {
@@ -57,65 +65,74 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
 
         let rest = rest.trim();
         if rest.is_empty() {
+            // Label-only line: symbol gets current lc.
             if let Some(lbl) = label {
-                labels.insert(lbl.to_string(), offset);
+                labels.insert(lbl.to_string(), lc);
             }
             continue;
         }
 
-        let mnem = rest.split_whitespace().next().unwrap().to_uppercase();
+        let mnem_end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+        let mnem = rest[..mnem_end].to_uppercase();
+        let args_str = rest[mnem_end..].trim();
 
-        // IS pseudo-instruction: defines a symbolic constant (no bytes emitted)
-        if mnem == "IS" {
-            if let Some(lbl) = label {
-                let args_str = rest[mnem.len()..].trim();
-                let val = resolve_label_or_number(args_str, &labels, offset)
-                    .map_err(|e| AssembleError { line: line_idx, message: e })?;
-                labels.insert(lbl.to_string(), val);
-            } else {
-                return Err(AssembleError {
+        match directives.get(&mnem) {
+            // IS: the label itself is the defined symbol; no bytes emitted.
+            Some(Directive::Is) => {
+                let lbl = label.ok_or_else(|| AssembleError {
                     line: line_idx,
                     message: "IS requires a label".into(),
-                });
+                })?;
+                let val = resolve_label_or_number(args_str, &labels, lc)
+                    .map_err(|e| AssembleError { line: line_idx, message: e })?;
+                labels.insert(lbl.to_string(), val);
+                continue;
             }
-            continue;
+
+            // LOC: set the location counter; record entry_addr on first use.
+            Some(Directive::Loc) => {
+                let new_lc = resolve_label_or_number(args_str, &labels, lc)
+                    .map_err(|e| AssembleError { line: line_idx, message: e })?;
+                lc = new_lc;
+                if entry_addr.is_none() {
+                    entry_addr = Some(lc);
+                }
+                // A label on a LOC line resolves to the *new* lc.
+                if let Some(lbl) = label {
+                    labels.insert(lbl.to_string(), lc);
+                }
+                continue;
+            }
+
+            _ => {}
         }
 
-        // For non-IS lines, register label at current offset
+        // For all other lines: register any label at the current lc.
         if let Some(lbl) = label {
-            labels.insert(lbl.to_string(), offset);
+            labels.insert(lbl.to_string(), lc);
         }
 
-        // Data pseudo-instructions
-        match mnem.as_str() {
-            "BYTE" => {
-                let args = &rest[mnem.len()..].trim();
-                offset += count_data_bytes(args, 1, line_idx)?;
-            }
-            "WYDE" => {
-                let args = &rest[mnem.len()..].trim();
-                offset += count_data_bytes(args, 2, line_idx)?;
-            }
-            "TETRA" => {
-                let args = &rest[mnem.len()..].trim();
-                offset += count_data_bytes(args, 4, line_idx)?;
-            }
-            "OCTA" => {
-                let args = &rest[mnem.len()..].trim();
-                offset += count_data_bytes(args, 8, line_idx)?;
-            }
-            _ => {
-                // Regular instruction: always 4 bytes
-                offset += 4;
-            }
+        // Advance lc by however many bytes this line emits.
+        match directives.get(&mnem) {
+            Some(Directive::Byte)  => { lc += count_data_bytes(args_str, 1, line_idx)?; }
+            Some(Directive::Wyde)  => { lc += count_data_bytes(args_str, 2, line_idx)?; }
+            Some(Directive::Tetra) => { lc += count_data_bytes(args_str, 4, line_idx)?; }
+            Some(Directive::Octa)  => { lc += count_data_bytes(args_str, 8, line_idx)?; }
+            _                      => { lc += 4; } // every real instruction is 4 bytes
         }
     }
 
     // --- Pass 2: emit bytes ---
+    //
+    // `cur_offset` tracks the absolute address of the next byte to be written.
+    // It begins at `entry_addr` (0 if no LOC was seen), so that all debug-info
+    // addresses stored in `line_to_offset` / `offset_to_line` are absolute and
+    // match the PC values the Machine will produce at runtime.
+    let entry_addr_val = entry_addr.unwrap_or(0);
     let mut bytes: Vec<u8> = Vec::new();
     let mut line_to_offset: HashMap<usize, u64> = HashMap::new();
     let mut offset_to_line: HashMap<u64, usize> = HashMap::new();
-    let mut cur_offset: u64 = 0;
+    let mut cur_offset: u64 = entry_addr_val;
 
     for (line_idx, &raw_line) in lines.iter().enumerate() {
         let line = strip_comment(raw_line);
@@ -133,13 +150,30 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
         let mnem = rest[..mnem_end].to_uppercase();
         let args_str = rest[mnem_end..].trim();
 
-        // Skip IS in pass 2 (already handled in pass 1)
-        if mnem == "IS" {
-            continue;
-        }
+        match directives.get(&mnem) {
+            // IS was fully resolved in pass 1.
+            Some(Directive::Is) => { continue; }
 
-        match mnem.as_str() {
-            "BYTE" => {
+            // LOC: validate forward-only movement, then zero-pad the gap.
+            Some(Directive::Loc) => {
+                let new_addr = resolve_label_or_number(args_str, &labels, cur_offset)
+                    .map_err(|e| AssembleError { line: line_idx, message: e })?;
+                if new_addr < cur_offset {
+                    return Err(AssembleError {
+                        line: line_idx,
+                        message: format!(
+                            "LOC {:#x} is before current position {:#x}",
+                            new_addr, cur_offset
+                        ),
+                    });
+                }
+                let gap = (new_addr - cur_offset) as usize;
+                bytes.extend(std::iter::repeat(0u8).take(gap));
+                cur_offset = new_addr;
+                continue;
+            }
+
+            Some(Directive::Byte) => {
                 let data = emit_data(args_str, 1, line_idx)?;
                 line_to_offset.insert(line_idx, cur_offset);
                 offset_to_line.insert(cur_offset, line_idx);
@@ -147,7 +181,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
                 bytes.extend_from_slice(&data);
                 continue;
             }
-            "WYDE" => {
+            Some(Directive::Wyde) => {
                 let data = emit_data(args_str, 2, line_idx)?;
                 line_to_offset.insert(line_idx, cur_offset);
                 offset_to_line.insert(cur_offset, line_idx);
@@ -155,7 +189,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
                 bytes.extend_from_slice(&data);
                 continue;
             }
-            "TETRA" => {
+            Some(Directive::Tetra) => {
                 let data = emit_data(args_str, 4, line_idx)?;
                 line_to_offset.insert(line_idx, cur_offset);
                 offset_to_line.insert(cur_offset, line_idx);
@@ -163,7 +197,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
                 bytes.extend_from_slice(&data);
                 continue;
             }
-            "OCTA" => {
+            Some(Directive::Octa) => {
                 let data = emit_data(args_str, 8, line_idx)?;
                 line_to_offset.insert(line_idx, cur_offset);
                 offset_to_line.insert(cur_offset, line_idx);
@@ -171,6 +205,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
                 bytes.extend_from_slice(&data);
                 continue;
             }
+
             _ => {}
         }
 
@@ -205,7 +240,7 @@ pub fn assemble(source: &str) -> Result<AssembleResult, AssembleError> {
         bytes,
         line_to_offset,
         offset_to_line,
-        entry_addr: 0,
+        entry_addr: entry_addr_val,
     })
 }
 
@@ -232,7 +267,7 @@ fn extract_label<'a>(line: &'a str, mnemonics: &HashSet<String>) -> (Option<&'a 
     (Some(label), rest)
 }
 
-fn count_data_bytes(args: &&str, unit_size: u64, line: usize) -> Result<u64, AssembleError> {
+fn count_data_bytes(args: &str, unit_size: u64, line: usize) -> Result<u64, AssembleError> {
     if args.is_empty() {
         return Err(AssembleError { line, message: "data directive requires arguments".into() });
     }
