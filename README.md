@@ -92,6 +92,12 @@ This enables the debugger to display original source alongside execution state.
   mmixec (TUI debugger)
 ```
 
+## TODO
+ - [ ] special register operation
+ - [ ] Memory segmentation
+ - [ ] Input/Output
+ - [ ] MMIX programs in TAOCP
+
 ## License
 
 See repository for license details.
