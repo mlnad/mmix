@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::Path;
 
-use crate::{AssembleResult, DebugInfo};
+use crate::{AssembleResult, DebugInfo, Segment};
 
 const MAGIC_BIN: &[u8; 8] = b"MMIXBIN\0";
 const MAGIC_DBG: &[u8; 8] = b"MMIXDBG\0";
@@ -10,8 +10,8 @@ const MAGIC_DBG: &[u8; 8] = b"MMIXDBG\0";
 /// Save an assembled program to a .mmb file with embedded debug information.
 ///
 /// Format:
-///   Header: "MMIXBIN\0" (8) + entry_addr (u64 BE) + code_length (u64 BE)
-///   Code:   code_length bytes of machine code
+///   Header: "MMIXBIN\0" (8) + entry_addr (u64 BE) + n_segments (u32 BE)
+///   Segments: for each segment: base (u64 BE) + len (u64 BE) + bytes
 ///   Debug:  "MMIXDBG\0" (8) + mapping entries + source file name + source lines
 pub fn save_mmb(
     path: &Path,
@@ -24,10 +24,14 @@ pub fn save_mmb(
     // Header
     f.write_all(MAGIC_BIN)?;
     f.write_all(&asm_result.entry_addr.to_be_bytes())?;
-    f.write_all(&(asm_result.bytes.len() as u64).to_be_bytes())?;
+    f.write_all(&(asm_result.segments.len() as u32).to_be_bytes())?;
 
-    // Code
-    f.write_all(&asm_result.bytes)?;
+    // Segments
+    for seg in &asm_result.segments {
+        f.write_all(&seg.base.to_be_bytes())?;
+        f.write_all(&(seg.bytes.len() as u64).to_be_bytes())?;
+        f.write_all(&seg.bytes)?;
+    }
 
     // Debug section
     f.write_all(MAGIC_DBG)?;
@@ -61,16 +65,15 @@ pub fn save_mmb(
     Ok(())
 }
 
-/// Load a .mmb file. Returns (entry_addr, code_bytes, Option<DebugInfo>).
+/// Load a .mmb file. Returns `(entry_addr, segments, Option<DebugInfo>)`.
 ///
-/// If the file contains a debug section after the code, it is parsed.
-/// Otherwise DebugInfo is None.
-pub fn load_mmb(path: &Path) -> io::Result<(u64, Vec<u8>, Option<DebugInfo>)> {
+/// If the file contains a debug section it is parsed; otherwise `None`.
+pub fn load_mmb(path: &Path) -> io::Result<(u64, Vec<Segment>, Option<DebugInfo>)> {
     let data = std::fs::read(path)?;
     let mut pos = 0;
 
-    // Header
-    if data.len() < 24 {
+    // Header: magic (8) + entry_addr (8) + n_segments (4)
+    if data.len() < 20 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "file too short for header"));
     }
     if &data[pos..pos + 8] != MAGIC_BIN {
@@ -78,28 +81,25 @@ pub fn load_mmb(path: &Path) -> io::Result<(u64, Vec<u8>, Option<DebugInfo>)> {
     }
     pos += 8;
 
-    let entry_addr = u64::from_be_bytes(data[pos..pos + 8].try_into().unwrap());
-    pos += 8;
+    let entry_addr  = read_u64(&data, &mut pos)?;
+    let n_segments  = read_u32(&data, &mut pos)? as usize;
 
-    let code_length = u64::from_be_bytes(data[pos..pos + 8].try_into().unwrap()) as usize;
-    pos += 8;
-
-    if data.len() < pos + code_length {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "file truncated: code section incomplete"));
+    let mut segments = Vec::with_capacity(n_segments);
+    for _ in 0..n_segments {
+        let base = read_u64(&data, &mut pos)?;
+        let len  = read_u64(&data, &mut pos)? as usize;
+        let bytes = read_bytes(&data, &mut pos, len)?.to_vec();
+        segments.push(Segment { base, bytes });
     }
-
-    let code = data[pos..pos + code_length].to_vec();
-    pos += code_length;
 
     // Check for debug section
     if data.len() < pos + 8 || &data[pos..pos + 8] != MAGIC_DBG {
-        return Ok((entry_addr, code, None));
+        return Ok((entry_addr, segments, None));
     }
     pos += 8;
 
-    // Parse debug section
     let debug_info = parse_debug_section(&data, &mut pos)?;
-    Ok((entry_addr, code, Some(debug_info)))
+    Ok((entry_addr, segments, Some(debug_info)))
 }
 
 fn read_u32(data: &[u8], pos: &mut usize) -> io::Result<u32> {

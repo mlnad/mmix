@@ -601,15 +601,25 @@ impl Machine {
         }
     }
 
-    /// Load raw bytes into memory at the given base address
-    pub fn load_raw(&mut self, base_addr: u64, bytes: &[u8]) {
+    /// Load an assembled program into memory and set the entry point.
+    ///
+    /// `segments` is a slice of `(base_address, bytes)` pairs; they need not
+    /// be contiguous or ordered.  The machine's PC is set to `entry_addr`.
+    pub fn load_program(&mut self, entry_addr: u64, segments: &[(u64, &[u8])]) {
+        for &(base, bytes) in segments {
+            self.load_raw(base, bytes);
+        }
+        self.pc = entry_addr;
+    }
+
+    fn load_raw(&mut self, base_addr: u64, bytes: &[u8]) {
         for (i, &b) in bytes.iter().enumerate() {
             self.memory.write_u8(base_addr.wrapping_add(i as u64), b);
         }
     }
 
-    /// Set the program entry point (PC)
-    pub fn set_entry(&mut self, addr: u64) {
+    #[cfg(test)]
+    fn set_entry(&mut self, addr: u64) {
         self.pc = addr;
     }
 

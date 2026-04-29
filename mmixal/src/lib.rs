@@ -8,14 +8,31 @@ pub mod binary;
 
 pub use assembler::assemble;
 
+/// A contiguous block of machine code or data at a specific base address.
+///
+/// An assembled program is split into segments when `LOC` crosses an MMIX
+/// segment boundary (Text / Data / Pool / Stack).  Each segment is loaded
+/// into the VM at its own `base` address; there is no zero-padding between
+/// non-adjacent segments.
+#[derive(Debug)]
+pub struct Segment {
+    /// Absolute start address in the MMIX virtual address space.
+    pub base:  u64,
+    /// Bytes to be written starting at `base`.
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Debug)]
 pub struct AssembleResult {
-    pub bytes: Vec<u8>,
-    /// source line index -> byte offset in `bytes`
+    /// One or more contiguous memory regions produced by the assembler.
+    ///
+    /// Guaranteed to be non-empty and sorted by `base` address.
+    pub segments:       Vec<Segment>,
+    /// source line index -> absolute byte address
     pub line_to_offset: HashMap<usize, u64>,
-    /// byte offset -> source line index
+    /// absolute byte address -> source line index
     pub offset_to_line: HashMap<u64, usize>,
-    pub entry_addr: u64,
+    pub entry_addr:     u64,
 }
 
 #[derive(Debug)]
